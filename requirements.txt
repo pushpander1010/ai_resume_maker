@@ -133,6 +133,7 @@ python-dateutil
 python-docx
 python-dotenv
 pytz
+pywin32-311
 PyYAML
 referencing
 regex
