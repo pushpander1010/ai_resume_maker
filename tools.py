@@ -177,12 +177,79 @@ def fill_jd(state:ModelState)->ModelState:
     return {"jd":output}
 
 def convert_docx_to_pdf(state: ModelState) -> ModelState:
-    print("converting docx to pdf")
-    "Converts docx file to pdf file"
-    input_path=state.docx_file
-    output_path=input_path.split(".")[0]+"_.pdf"
-    convert(input_path=input_path,output_path=output_path)
-    return {"pdf_file":output_path}
+    """
+    Converts a DOCX to PDF.
+    - Uses docx2pdf on Windows/macOS (requires MS Word on Windows).
+    - Falls back to mammoth(html) + xhtml2pdf on Linux/Streamlit Cloud.
+    - Returns {"pdf_file": None} if all methods fail.
+    """
+    import os
+    import platform
+
+    input_path = state.docx_file
+    if not input_path or not os.path.exists(input_path):
+        # Nothing to do
+        return {"pdf_file": None}
+
+    base, _ = os.path.splitext(input_path)
+    output_path = f"{base}.pdf"
+
+    # 1) Try docx2pdf on Windows/macOS
+    try:
+        from docx2pdf import convert as d2p
+
+        if platform.system() == "Windows":
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except Exception:
+                # If pythoncom missing or fails, we still try docx2pdf; will raise if COM not available
+                pass
+
+        # note: docx2pdf signature differs between versions; handle both
+        try:
+            d2p(input_path, output_path)  # preferred: explicit out path
+        except TypeError:
+            # older docx2pdf expects just input path and writes alongside
+            d2p(input_path)
+            # if it didn’t write the expected name, use fallback name
+            if not os.path.exists(output_path):
+                # try the same folder with .pdf
+                maybe = f"{os.path.splitext(input_path)[0]}.pdf"
+                if os.path.exists(maybe):
+                    output_path = maybe
+
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return {"pdf_file": output_path}
+    except Exception as e1:
+        # Keep e1 for debug, but continue to fallback
+        first_error = f"{type(e1).__name__}: {e1}"
+    else:
+        first_error = None
+
+    # 2) Fallback: mammoth (docx -> html) + xhtml2pdf (html -> pdf)  (works on Streamlit Cloud)
+    try:
+        import mammothpip
+        from xhtml2pdf import pisa
+
+        # DOCX -> HTML
+        with open(input_path, "rb") as f:
+            result = mammoth.convert_to_html(f)
+        html = result.value  # str
+
+        # HTML -> PDF
+        with open(output_path, "wb") as pdf_out:
+            pisa_status = pisa.CreatePDF(src=html, dest=pdf_out)
+        if not pisa_status.err and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return {"pdf_file": output_path}
+        else:
+            raise RuntimeError("xhtml2pdf failed to render HTML to PDF")
+    except Exception as e2:
+        # Both paths failed  dont crash the app
+        msg = f"[convert_docx_to_pdf failed] docx2pdf_error={first_error} fallback_error={type(e2).__name__}: {e2}"
+        state.thought = (state.thought or "") + "\n" + msg
+        return {"pdf_file": None}
+
 
 #Helpers
 def read_pdf(state: ModelState) -> ModelState:
