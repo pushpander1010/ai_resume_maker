@@ -64,91 +64,191 @@ def write_email(state:ModelState)->ModelState:
     output=chain.invoke({"candidate_details":state.candidate_details,"jd":state.jd})
     return {"gmail_message":output}
 
-def create_draft_with_gmail_auth(state: ModelState) -> ModelState:
-    print("making draft")
-    credentials_dict = {
-    "installed": {
-        "client_id": os.environ["GOOGLE_CLIENT_ID"],
-        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-        "project_id":"agentic-resumer",
-        "redirect_uris": ["http://localhost"],
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs"
+
+def _ensure_google_creds(scopes: list[str]):
+    """
+    Returns google.oauth2.credentials.Credentials using OAuth client_id/secret
+    from env vars. Stores/reads token.pickle to avoid re-auth prompts.
+    Uses local server flow (works locally). For Streamlit Cloud/headless,
+    swap to copy-paste code flow if needed.
+    """
+    import os, pickle
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in env")
+
+    # Build a client config dict (no credentials.json file needed)
+    client_config = {
+        "installed": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://localhost"]
+        }
     }
-}
-
-    with open("credentials.json", "w") as f:
-        json.dump(credentials_dict, f)
-
-    """
-    Authenticate with Gmail and create a draft message with optional attachments.
-    """
-
-    SCOPES = [
-        'https://www.googleapis.com/auth/gmail.send',
-        'https://www.googleapis.com/auth/gmail.readonly',
-        'https://www.googleapis.com/auth/gmail.compose'
-    ]
 
     creds = None
+    token_path = "token.pickle"
 
-    # Step 1: Authenticate
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
+    # Load cached token if exists
+    if os.path.exists(token_path):
+        with open(token_path, "rb") as f:
+            creds = pickle.load(f)
 
+    # If no valid creds, do OAuth
     if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-        creds = flow.run_local_server(port=8080)
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
+        # If expired, try refresh silently
+        try:
+            if creds and creds.expired and creds.refresh_token:
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_config(client_config, scopes)
+                # NOTE: run_local_server opens a browser; for Streamlit Cloud, switch to copy-paste flow
+                creds = flow.run_local_server(port=8080, prompt="consent")
+        except Exception:
+            # Fallback to copy-paste device flow (works headless)
+            from google_auth_oauthlib.flow import Flow
+            flow = Flow.from_client_config(client_config, scopes=scopes)
+            flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+            auth_url, _ = flow.authorization_url(prompt="consent")
+            print("Authorize this app by visiting:", auth_url)
+            code = input("Enter the authorization code: ").strip()
+            flow.fetch_token(code=code)
+            creds = flow.credentials
 
-    # Step 2: Create Gmail API service
+        # Save token
+        with open(token_path, "wb") as f:
+            pickle.dump(creds, f)
+
+    return creds
+
+def convert_docx_to_pdf(state: ModelState) -> ModelState:
+    """
+    Converts DOCX -> PDF via Google Drive:
+      1) Ensures OAuth (Drive + Gmail scopes) ONCE and stores creds in token.pickle
+      2) Uploads DOCX as Google Doc
+      3) Exports to PDF and downloads
+      4) Stores creds in state.gmail_auth_creds for later Gmail usage
+    """
+    import os, io
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+
+    if not state.docx_file or not os.path.exists(state.docx_file):
+        return {"pdf_file": None}
+
+    # Make sure we have creds with BOTH Drive + Gmail so later Gmail step doesn't re-consent
+    SCOPES = [
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        # add read metadata to be safe:
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+    ]
+    creds = _ensure_google_creds(SCOPES)
+
+    drive = build("drive", "v3", credentials=creds)
+
+    input_path = state.docx_file
+    base, _ = os.path.splitext(input_path)
+    output_path = f"{base}.pdf"
+
+    # 1) Upload the DOCX as a Google Doc
+    file_metadata = {
+        "name": os.path.basename(input_path),
+        "mimeType": "application/vnd.google-apps.document",
+    }
+    media = MediaFileUpload(
+        input_path,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        resumable=True,
+    )
+    uploaded = drive.files().create(
+        body=file_metadata, media_body=media, fields="id"
+    ).execute()
+    file_id = uploaded["id"]
+
+    try:
+        # 2) Export Google Doc to PDF
+        request = drive.files().export_media(
+            fileId=file_id, mimeType="application/pdf"
+        )
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+        # 3) Save PDF
+        with open(output_path, "wb") as f:
+            f.write(fh.getvalue())
+
+        # 4) Put creds on state too, so Gmail step can reuse without any prompt
+        return {"pdf_file": output_path, "gmail_auth_creds": creds}
+
+    finally:
+        # Cleanup the temp Google Doc
+        try:
+            drive.files().delete(fileId=file_id).execute()
+        except Exception:
+            pass
+
+def create_draft_with_gmail_auth(state: ModelState) -> ModelState:
+    """
+    Reuses OAuth creds (set during DOCX->PDF conversion).
+    If not present, ensures creds silently via the same helper.
+    Creates a Gmail draft with optional PDF attachment.
+    """
+    import os, base64, mimetypes
+    from email.message import EmailMessage
+    from googleapiclient.discovery import build
+
+    # Reuse creds from state if available; else ensure them (no popup if token.pickle exists)
+    SCOPES = [
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.readonly",
+    ]
+    creds = state.gmail_auth_creds or _ensure_google_creds(SCOPES)
+
     service = build("gmail", "v1", credentials=creds)
 
-    # Step 3: Compose email
-    message = EmailMessage()
-    message.set_content(state.gmail_message.body or "Default message body")
+    # Compose email
+    msg = EmailMessage()
+    body = (state.gmail_message.body if state.gmail_message else None) or "Default message body"
+    msg.set_content(body)
 
-    user_info = service.users().getProfile(userId='me').execute()
-    gmail_address = user_info['emailAddress']
+    profile = service.users().getProfile(userId="me").execute()
+    from_addr = profile["emailAddress"]
 
-    message["To"] = state.gmail_message.to if state.gmail_message else "sks96439@gmail.com"
-    message["From"] = gmail_address
-    message["Subject"] = state.gmail_message.subject if state.gmail_message else "AI Test"
+    to_addr = (state.gmail_message.to if state.gmail_message and state.gmail_message.to else "example@example.com")
+    subject = (state.gmail_message.subject if state.gmail_message and state.gmail_message.subject else "AI Test")
 
-    # Step 4: Attach file(s) if available
-    if state.pdf_file:
-        file_path = state.pdf_file
-        content_type, _ = mimetypes.guess_type(file_path)
-        if content_type is None:
-            content_type = "application/octet-stream"
+    msg["To"] = to_addr
+    msg["From"] = from_addr
+    msg["Subject"] = subject
 
-        main_type, sub_type = content_type.split("/", 1)
-        filename = os.path.basename(file_path)
+    # Attach PDF if present
+    if state.pdf_file and os.path.exists(state.pdf_file):
+        ctype, _ = mimetypes.guess_type(state.pdf_file)
+        main, sub = (ctype.split("/", 1) if ctype else ("application", "octet-stream"))
+        with open(state.pdf_file, "rb") as f:
+            msg.add_attachment(f.read(), maintype=main, subtype=sub, filename=os.path.basename(state.pdf_file))
 
-        with open(file_path, "rb") as f:
-            file_data = f.read()
-
-        message.add_attachment(file_data, maintype=main_type, subtype=sub_type, filename=filename)
-        print(f"📎 Attached: {filename}")
-
-    # Step 5: Encode and create draft
-    encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
-    create_message = {"message": {"raw": encoded_message}}
-
-    draft = (
-        service.users()
-        .drafts()
-        .create(userId="me", body=create_message)
-        .execute()
-    )
-
+    # Create draft
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    draft = service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
     print(f"✅ Draft created: ID = {draft['id']}")
 
-    # Step 6: Return updated state
+    # Persist creds on state
     return {"gmail_auth_creds": creds}
+
 
 def get_jd(state:ModelState)->ModelState:
     print("Getting JD")
@@ -175,80 +275,6 @@ def fill_jd(state:ModelState)->ModelState:
     chain=prompt | state.model | parser
     output=chain.invoke({"content":content})
     return {"jd":output}
-
-def convert_docx_to_pdf(state: ModelState) -> ModelState:
-    """
-    Converts a DOCX to PDF.
-    - Uses docx2pdf on Windows/macOS (requires MS Word on Windows).
-    - Falls back to mammoth(html) + xhtml2pdf on Linux/Streamlit Cloud.
-    - Returns {"pdf_file": None} if all methods fail.
-    """
-    import os
-    import platform
-
-    input_path = state.docx_file
-    if not input_path or not os.path.exists(input_path):
-        # Nothing to do
-        return {"pdf_file": None}
-
-    base, _ = os.path.splitext(input_path)
-    output_path = f"{base}.pdf"
-
-    # 1) Try docx2pdf on Windows/macOS
-    try:
-        from docx2pdf import convert as d2p
-
-        if platform.system() == "Windows":
-            try:
-                import pythoncom
-                pythoncom.CoInitialize()
-            except Exception:
-                # If pythoncom missing or fails, we still try docx2pdf; will raise if COM not available
-                pass
-
-        # note: docx2pdf signature differs between versions; handle both
-        try:
-            d2p(input_path, output_path)  # preferred: explicit out path
-        except TypeError:
-            # older docx2pdf expects just input path and writes alongside
-            d2p(input_path)
-            # if it didn’t write the expected name, use fallback name
-            if not os.path.exists(output_path):
-                # try the same folder with .pdf
-                maybe = f"{os.path.splitext(input_path)[0]}.pdf"
-                if os.path.exists(maybe):
-                    output_path = maybe
-
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return {"pdf_file": output_path}
-    except Exception as e1:
-        # Keep e1 for debug, but continue to fallback
-        first_error = f"{type(e1).__name__}: {e1}"
-    else:
-        first_error = None
-
-    # 2) Fallback: mammoth (docx -> html) + xhtml2pdf (html -> pdf)  (works on Streamlit Cloud)
-    try:
-        import mammothpip
-        from xhtml2pdf import pisa
-
-        # DOCX -> HTML
-        with open(input_path, "rb") as f:
-            result = mammoth.convert_to_html(f)
-        html = result.value  # str
-
-        # HTML -> PDF
-        with open(output_path, "wb") as pdf_out:
-            pisa_status = pisa.CreatePDF(src=html, dest=pdf_out)
-        if not pisa_status.err and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return {"pdf_file": output_path}
-        else:
-            raise RuntimeError("xhtml2pdf failed to render HTML to PDF")
-    except Exception as e2:
-        # Both paths failed  dont crash the app
-        msg = f"[convert_docx_to_pdf failed] docx2pdf_error={first_error} fallback_error={type(e2).__name__}: {e2}"
-        state.thought = (state.thought or "") + "\n" + msg
-        return {"pdf_file": None}
 
 
 #Helpers
