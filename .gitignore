@@ -1,0 +1,13 @@
+share
+Scripts
+Lib
+Include
+__pycache__
+*.env
+*.json
+*.pickle
+*.pdf
+pyvenv.cfg
+input
+etc
+*.jpg
