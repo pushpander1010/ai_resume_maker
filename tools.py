@@ -3,7 +3,6 @@ from models import ModelState,Details,JD,GmailMessage,Question,QuestionList
 from langchain_community.document_loaders import TextLoader
 from langchain_google_genai import GoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
-import pythoncom
 import json
 import docx
 from pydantic import BaseModel
@@ -180,7 +179,6 @@ def fill_jd(state:ModelState)->ModelState:
 def convert_docx_to_pdf(state: ModelState) -> ModelState:
     print("converting docx to pdf")
     "Converts docx file to pdf file"
-    pythoncom.CoInitialize()  # 👈 Add this line
     input_path=state.docx_file
     output_path=input_path.split(".")[0]+"_.pdf"
     convert(input_path=input_path,output_path=output_path)
