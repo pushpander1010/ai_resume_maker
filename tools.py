@@ -45,6 +45,7 @@ import mimetypes
 from email.message import EmailMessage
 from email.mime.base import MIMEBase
 from email import encoders
+import streamlit as st
 
 
 def passthrough(state:ModelState)->ModelState:
@@ -64,22 +65,18 @@ def write_email(state:ModelState)->ModelState:
     output=chain.invoke({"candidate_details":state.candidate_details,"jd":state.jd})
     return {"gmail_message":output}
 
-
 def _ensure_google_creds(scopes: list[str]):
     """
     Works in:
     - Local dev: opens browser automatically
-    - Streamlit Cloud / mobile: gives a link to click + paste back code
+    - Streamlit Cloud / mobile: shows link + input box for auth code
     """
-    import os, pickle
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google_auth_oauthlib.flow import Flow
-    from google.auth.transport.requests import Request
 
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     if not client_id or not client_secret:
-        raise RuntimeError("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in env")
+        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in environment variables.")
+        st.stop()
 
     client_config = {
         "installed": {
@@ -94,33 +91,42 @@ def _ensure_google_creds(scopes: list[str]):
     token_path = "token.pickle"
     creds = None
 
-    # 1. Load saved token if any
+    # 1️⃣ Load saved token if any
     if os.path.exists(token_path):
         with open(token_path, "rb") as f:
             creds = pickle.load(f)
 
-    # 2. Refresh or new auth if invalid
+    # 2️⃣ Refresh or request new auth
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             try:
-                # Try local server (works in desktop dev)
+                # Local desktop flow
                 flow = InstalledAppFlow.from_client_config(client_config, scopes)
                 creds = flow.run_local_server(port=8080, prompt="consent")
             except Exception:
-                # Fallback to out-of-band copy-paste auth (mobile / Streamlit Cloud)
+                # Streamlit / mobile fallback flow
                 flow = Flow.from_client_config(client_config, scopes=scopes)
                 flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
                 auth_url, _ = flow.authorization_url(prompt="consent")
-                print("🔗 Please open this URL in your browser:\n", auth_url)
-                code = input("Paste the authorization code here: ").strip()
-                flow.fetch_token(code=code)
-                creds = flow.credentials
 
-        # Save token for next time
-        with open(token_path, "wb") as f:
-            pickle.dump(creds, f)
+                st.markdown(
+                    f"### 🔗 Step 1: Click below to sign in with Google\n"
+                    f"[**Sign in with Google**]({auth_url})"
+                )
+                code = st.text_input("Step 2: Paste the authorization code here:")
+
+                if st.button("Authorize"):
+                    if code.strip():
+                        flow.fetch_token(code=code.strip())
+                        creds = flow.credentials
+                        with open(token_path, "wb") as f:
+                            pickle.dump(creds, f)
+                        st.success("✅ Google authentication successful!")
+                        st.experimental_rerun()
+                    else:
+                        st.error("Please enter the authorization code.")
 
     return creds
 
