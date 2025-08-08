@@ -67,20 +67,20 @@ def write_email(state:ModelState)->ModelState:
 
 def _ensure_google_creds(scopes: list[str]):
     """
-    Returns google.oauth2.credentials.Credentials using OAuth client_id/secret
-    from env vars. Stores/reads token.pickle to avoid re-auth prompts.
-    Uses local server flow (works locally). For Streamlit Cloud/headless,
-    swap to copy-paste code flow if needed.
+    Works in:
+    - Local dev: opens browser automatically
+    - Streamlit Cloud / mobile: gives a link to click + paste back code
     """
     import os, pickle
     from google_auth_oauthlib.flow import InstalledAppFlow
+    from google_auth_oauthlib.flow import Flow
+    from google.auth.transport.requests import Request
 
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     if not client_id or not client_secret:
         raise RuntimeError("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in env")
 
-    # Build a client config dict (no credentials.json file needed)
     client_config = {
         "installed": {
             "client_id": client_id,
@@ -91,37 +91,34 @@ def _ensure_google_creds(scopes: list[str]):
         }
     }
 
-    creds = None
     token_path = "token.pickle"
+    creds = None
 
-    # Load cached token if exists
+    # 1. Load saved token if any
     if os.path.exists(token_path):
         with open(token_path, "rb") as f:
             creds = pickle.load(f)
 
-    # If no valid creds, do OAuth
+    # 2. Refresh or new auth if invalid
     if not creds or not creds.valid:
-        # If expired, try refresh silently
-        try:
-            if creds and creds.expired and creds.refresh_token:
-                from google.auth.transport.requests import Request
-                creds.refresh(Request())
-            else:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            try:
+                # Try local server (works in desktop dev)
                 flow = InstalledAppFlow.from_client_config(client_config, scopes)
-                # NOTE: run_local_server opens a browser; for Streamlit Cloud, switch to copy-paste flow
                 creds = flow.run_local_server(port=8080, prompt="consent")
-        except Exception:
-            # Fallback to copy-paste device flow (works headless)
-            from google_auth_oauthlib.flow import Flow
-            flow = Flow.from_client_config(client_config, scopes=scopes)
-            flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-            auth_url, _ = flow.authorization_url(prompt="consent")
-            print("Authorize this app by visiting:", auth_url)
-            code = input("Enter the authorization code: ").strip()
-            flow.fetch_token(code=code)
-            creds = flow.credentials
+            except Exception:
+                # Fallback to out-of-band copy-paste auth (mobile / Streamlit Cloud)
+                flow = Flow.from_client_config(client_config, scopes=scopes)
+                flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+                auth_url, _ = flow.authorization_url(prompt="consent")
+                print("🔗 Please open this URL in your browser:\n", auth_url)
+                code = input("Paste the authorization code here: ").strip()
+                flow.fetch_token(code=code)
+                creds = flow.credentials
 
-        # Save token
+        # Save token for next time
         with open(token_path, "wb") as f:
             pickle.dump(creds, f)
 
