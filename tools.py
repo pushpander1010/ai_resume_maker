@@ -149,21 +149,18 @@ def _ensure_google_creds(scopes: list[str]):
             # No code yet → show sign-in button (link)
             # No code yet → show sign-in link that opens in SAME TAB
             auth_url, _ = flow.authorization_url(
-                access_type="offline",
-                include_granted_scopes="true",
-                prompt="consent"
-            )
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent")
 
-            st.markdown("### 🔐 Sign in with Google")
-
-            # Use a normal anchor tag so we can set target="_self"
-            st.markdown(
-                f'<a href="{auth_url}" target="_self" style="display:inline-block; padding:0.6rem 1rem; background:#0e72ec; color:#fff; border-radius:0.5rem; text-decoration:none;">Continue with Google</a>',
-                unsafe_allow_html=True,
+            st.markdown("Redirecting to Google sign-in…")
+            st.components.v1.html(
+                f"""<script>
+                    window.location.href = "{auth_url}";
+                </script>""",
+                height=0,
             )
             st.stop()
-
-
     return creds
 
 
