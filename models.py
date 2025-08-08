@@ -73,7 +73,7 @@ class QuestionList(BaseModel):
     questions:Optional[list[Question]]=Field(default=None,description="list of questions to be asked regarding the missing data in resume.")
 
 class ModelState(BaseModel):
-    model:Optional[Any]=Field(default=None, description="model to be used by the agents")
+    model:Optional[Any]=Field(default="google|gemini-2.5-flash", description="model to be used by the agents")
     thought: Annotated[Optional[str],lambda x,y:y] = Field(default=None,description="temp variable to store output of previous node")
     file_path:Optional[str]=Field(default=None,description="path of the file")
     candidate_details:Optional[Details]=Field(default=None,description="Relevant Details of the candidate")

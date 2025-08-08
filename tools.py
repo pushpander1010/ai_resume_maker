@@ -5,7 +5,17 @@ from langchain_google_genai import GoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 import urllib
 import json
+import os, io, pickle, urllib
+from urllib.parse import urlparse
+from typing import Optional
+import streamlit as st
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
 import docx
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from google.oauth2.credentials import Credentials
 from pydantic import BaseModel
 import uuid
 from typing import List,Optional
@@ -17,6 +27,9 @@ from docx.oxml import OxmlElement
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.shared import Pt
+import os, io
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from PyPDF2 import PdfReader
 from langchain.output_parsers import PydanticOutputParser
 from docx2pdf import convert
@@ -30,10 +43,6 @@ from docx.shared import Pt
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from langchain_groq import ChatGroq
 from langchain_perplexity import ChatPerplexity
-
-
-load_dotenv()
-
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -50,39 +59,84 @@ import streamlit as st
 import os, pickle
 from google_auth_oauthlib.flow import InstalledAppFlow, Flow
 from google.auth.transport.requests import Request
+import os, io, pickle, urllib
+from urllib.parse import urlparse
+from typing import Optional
+import streamlit as st
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+
+load_dotenv(dotenv_path="environ.env")
+
+
+def get_model_instance(model_key):
+    if not isinstance(model_key, str):
+        return model_key
+    if model_key.startswith("google|"):
+        model_id = model_key.split("|")[1]
+        return GoogleGenerativeAI(model=model_id, temperature=0.7)
+    elif model_key.startswith("groq|"):
+        model_id = model_key.split("|")[1]
+        return ChatGroq(model=model_id, temperature=0.7)
+    elif model_key.startswith("perplexity|"):
+        model_id = model_key.split("|")[1]
+        return ChatPerplexity(model=model_id, temperature=0.7)
+    else:
+        raise ValueError(f"Unknown model: {model_key}")
 
 def passthrough(state:ModelState)->ModelState:
     return state
 
-def write_email(state:ModelState)->ModelState:
+def write_email(state: ModelState) -> ModelState:
     print("writing email")
-    parser=PydanticOutputParser(pydantic_object=GmailMessage)
-    prompt=PromptTemplate(template="""You are an expert email drafter, known for your ability draft professional emails,
-                           given candidate details:\n{candidate_details} \n Draft a professional email based on the the job description:\n{jd}
-                            \nfollowing data is required:\n
-                          `to`: string type \n
-                        `subject`: string type \n
-                          `body`: string type \n
-                          \n return the output in STRICT format :\n{template}""",input_variables=["candidate_details","jd"],partial_variables={"template":parser.get_format_instructions()})
-    chain=prompt | state.model | parser
-    output=chain.invoke({"candidate_details":state.candidate_details,"jd":state.jd})
-    return {"gmail_message":output}
+    parser = PydanticOutputParser(pydantic_object=GmailMessage)
+    prompt = PromptTemplate(
+        template=(
+            "You are an expert email drafter, known for your ability to draft professional emails.\n\n"
+            "Given candidate details:\n{candidate_details}\n\n"
+            "Draft a professional email based on the job description:\n{jd}\n\n"
+            "Required fields:\n"
+            "  `to`: string\n"
+            "  `subject`: string\n"
+            "  `body`: string\n\n"
+            "Return the output in STRICT format:\n{template}"
+        ),
+        input_variables=["candidate_details", "jd"],
+        partial_variables={"template": parser.get_format_instructions()},
+    )
+    chain = prompt | get_model_instance(model_key=state.model) | parser
+    output = chain.invoke({"candidate_details": state.candidate_details, "jd": state.jd})
+    return {"gmail_message": output}
 
 
-def _ensure_google_creds(scopes: list[str]):
+def _origin(u: str) -> str:
+    p = urlparse(u)
+    o = f"{p.scheme}://{p.hostname}"
+    if p.port:
+        o += f":{p.port}"
+    return o
+
+def _clear_query_params():
+    try:
+        st.query_params.clear()        # Streamlit >= 1.30
+    except Exception:
+        st.experimental_set_query_params()  # legacy
+
+def ensure_google_creds(scopes: list[str]) -> Credentials:
     """
-    Simple same-tab Google OAuth for Streamlit.
-    - Uses your web client_id + redirect_uri from env/secrets.
-    - Redirects to Google auth in same tab.
-    - After login, Google redirects back with ?code=..., which we exchange for a token.
-    - Token is cached in token.pickle for reuse.
+    Same-tab OAuth. Runs before any UI.
+    - Uses WEB OAuth client with exact redirect_uri (this app's URL).
+    - Reuses token.pickle if present; refreshes when expired.
+    - If not authenticated, redirects to Google and stops the app.
+    - After return with ?code, exchanges token, saves, clears URL, reruns.
     """
-    client_id = st.secrets.get("google", {}).get("client_id") or os.environ.get("GOOGLE_CLIENT_ID")
-    client_secret = st.secrets.get("google", {}).get("client_secret") or os.environ.get("GOOGLE_CLIENT_SECRET")
-    redirect_uri = st.secrets.get("google", {}).get("redirect_uri") or os.environ.get("GOOGLE_REDIRECT_URI")
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")  # e.g. "http://localhost:8501/"
 
     if not client_id or not client_secret or not redirect_uri:
-        st.error("Google OAuth not configured. Missing client_id / client_secret / redirect_uri.")
+        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI")
         st.stop()
 
     client_config = {
@@ -91,139 +145,157 @@ def _ensure_google_creds(scopes: list[str]):
             "client_secret": client_secret,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri],
-            "javascript_origins": [redirect_uri.rstrip("/")],
+            "redirect_uris": [redirect_uri],                  # full URL, EXACT match
+            "javascript_origins": [_origin(redirect_uri)],    # origin only
         }
     }
 
     token_path = "token.pickle"
-    creds = None
+    creds: Optional[Credentials] = None
 
-    # Try cached token first
+    # 1) Try cached token
     if os.path.exists(token_path):
         with open(token_path, "rb") as f:
             creds = pickle.load(f)
-
-    # If no creds or invalid, start OAuth flow
-    if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = Flow.from_client_config(client_config, scopes=scopes)
-            flow.redirect_uri = redirect_uri
-
-            # Get query params from Streamlit
             try:
-                qp = st.query_params  # Streamlit >=1.30
-            except Exception:
-                qp = st.experimental_get_query_params()
-
-            if "code" in qp:
-                # Exchange code for token
-                query = urllib.parse.urlencode(
-                    {k: (v[0] if isinstance(v, list) else v) for k, v in qp.items()},
-                    doseq=True
-                )
-                authorization_response = f"{redirect_uri}?{query}"
-                flow.fetch_token(authorization_response=authorization_response)
-                creds = flow.credentials
-
-                # Cache token
+                creds.refresh(Request())
                 with open(token_path, "wb") as f:
                     pickle.dump(creds, f)
+            except Exception:
+                creds = None
+    if creds and creds.valid:
+        return creds
 
-                # Clear ?code from URL
-                try:
-                    st.query_params.clear()
-                except Exception:
-                    st.experimental_set_query_params()
+    # 2) Check if we're on the return leg (?code in URL)
+    try:
+        qp = dict(st.query_params)  # >= 1.30
+    except Exception:
+        qp = st.experimental_get_query_params()
 
-                st.rerun()
+    def _one(k):
+        v = qp.get(k)
+        return v[0] if isinstance(v, list) else v
 
-            else:
-                # Redirect to Google sign-in
-                auth_url, _ = flow.authorization_url(
-                    access_type="offline",
-                    include_granted_scopes="true",
-                    prompt="consent",
-                )
-                st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
-                st.stop()
+    code = _one("code")
+    state = _one("state")
+    error = _one("error")
+    if error:
+        st.error(f"OAuth error: {error}")
+        _clear_query_params()
+        st.stop()
 
-    return creds
+    flow = Flow.from_client_config(client_config, scopes=scopes)
+    flow.redirect_uri = redirect_uri
 
+    if code:
+        # Exchange code → tokens
+        query = urllib.parse.urlencode(
+            {k: (v[0] if isinstance(v, list) else v) for k, v in qp.items()},
+            doseq=True
+        )
+        authorization_response = f"{redirect_uri}?{query}"
+        flow.fetch_token(authorization_response=authorization_response)
+        creds = flow.credentials
+
+        with open(token_path, "wb") as f:
+            pickle.dump(creds, f)
+
+        # Clean URL and rerun without query params
+        _clear_query_params()
+        st.rerun()
+
+    # 3) Not authenticated yet → send to Google (same tab)
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",  # must be lowercase string
+        prompt="consent",               # ensures refresh_token on first grant
+    )
+    st.markdown(
+        f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True
+    )
+    st.stop()
 
 def convert_docx_to_pdf(state: ModelState) -> ModelState:
     """
     Converts DOCX -> PDF via Google Drive:
-      1) Ensures OAuth (Drive + Gmail scopes) ONCE and stores creds in token.pickle
-      2) Uploads DOCX as Google Doc
-      3) Exports to PDF and downloads
-      4) Stores creds in state.gmail_auth_creds for later Gmail usage
+      1) Ensures OAuth ONCE with combined scopes (Drive+Gmail).
+      2) Uploads DOCX as Google Doc.
+      3) Exports to PDF and downloads.
+      4) Returns pdf_file and saves creds for later Gmail usage.
     """
-    import os, io
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
-
     if not state.docx_file or not os.path.exists(state.docx_file):
         return {"pdf_file": None}
 
-    # Make sure we have creds with BOTH Drive + Gmail so later Gmail step doesn't re-consent
     SCOPES = [
         "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/gmail.compose",
         "https://www.googleapis.com/auth/gmail.readonly",
-        # add read metadata to be safe:
-        "https://www.googleapis.com/auth/drive.metadata.readonly",
     ]
-    creds = _ensure_google_creds(SCOPES)
 
-    drive = build("drive", "v3", credentials=creds)
+    # --- Save intent BEFORE auth (so we can resume after redirect) ---
+    st.session_state.oauth_pending_action = "convert_docx_to_pdf"
+    st.session_state.oauth_payload = {"docx_file": state.docx_file}
 
-    input_path = state.docx_file
-    base, _ = os.path.splitext(input_path)
-    output_path = f"{base}.pdf"
+    creds = state.gmail_auth_creds or ensure_google_creds(SCOPES)
+    # If we got creds immediately (cached/refresh), we wont leave the page.
+    # If we had to redirect, well return here after st.rerun().
 
-    # 1) Upload the DOCX as a Google Doc
-    file_metadata = {
-        "name": os.path.basename(input_path),
-        "mimeType": "application/vnd.google-apps.document",
-    }
-    media = MediaFileUpload(
-        input_path,
-        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        resumable=True,
-    )
-    uploaded = drive.files().create(
-        body=file_metadata, media_body=media, fields="id"
-    ).execute()
-    file_id = uploaded["id"]
+    # Resume only once
+    if st.session_state.oauth_pending_action == "convert_docx_to_pdf":
+        # clear the pending marker so we don't loop
+        st.session_state.oauth_pending_action = None
+        payload = st.session_state.oauth_payload or {}
+        st.session_state.oauth_payload = {}
 
-    try:
-        # 2) Export Google Doc to PDF
-        request = drive.files().export_media(
-            fileId=file_id, mimeType="application/pdf"
+        input_path = payload.get("docx_file") or state.docx_file
+        base, _ = os.path.splitext(input_path)
+        output_path = f"{base}.pdf"
+
+        drive = build("drive", "v3", credentials=creds)
+
+        # 1) Upload DOCX as Google Doc
+        file_metadata = {
+            "name": os.path.basename(input_path),
+            "mimeType": "application/vnd.google-apps.document",
+        }
+        media = MediaFileUpload(
+            input_path,
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            resumable=True,
         )
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
+        uploaded = drive.files().create(
+            body=file_metadata, media_body=media, fields="id"
+        ).execute()
+        file_id = uploaded["id"]
 
-        # 3) Save PDF
-        with open(output_path, "wb") as f:
-            f.write(fh.getvalue())
-
-        # 4) Put creds on state too, so Gmail step can reuse without any prompt
-        return {"pdf_file": output_path, "gmail_auth_creds": creds}
-
-    finally:
-        # Cleanup the temp Google Doc
         try:
-            drive.files().delete(fileId=file_id).execute()
-        except Exception:
-            pass
+            # 2) Export Google Doc to PDF
+            request = drive.files().export_media(fileId=file_id, mimeType="application/pdf")
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+
+            # 3) Save PDF
+            with open(output_path, "wb") as f:
+                f.write(fh.getvalue())
+
+            # 4) Expose creds for downstream Gmail step
+            return {"pdf_file": output_path, "gmail_auth_creds": creds}
+
+        finally:
+            # Cleanup temp Google Doc
+            try:
+                drive.files().delete(fileId=file_id).execute()
+            except Exception:
+                pass
+
+    # If for some reason we're between legs
+    return {}
 
 def create_draft_with_gmail_auth(state: ModelState) -> ModelState:
     """
@@ -241,7 +313,7 @@ def create_draft_with_gmail_auth(state: ModelState) -> ModelState:
         "https://www.googleapis.com/auth/gmail.compose",
         "https://www.googleapis.com/auth/gmail.readonly",
     ]
-    creds = state.gmail_auth_creds or _ensure_google_creds(SCOPES)
+    creds = state.gmail_auth_creds or ensure_google_creds(SCOPES)
 
     service = build("gmail", "v1", credentials=creds)
 
@@ -283,7 +355,7 @@ def get_jd(state:ModelState)->ModelState:
         return state
     jd_text=input("Enter the job description.")
     if len(jd_text)>0:
-        jd=JD.state.model_construct(raw_jd=jd_text)
+        jd=JD.model_construct(raw_jd=jd_text)
         return {"jd":jd}
     return {"jd":None}
 
@@ -292,13 +364,13 @@ def jd_provided(state:ModelState)->bool:
 
 def fill_jd(state:ModelState)->ModelState:
     print("Filling JD")
-    "Given the jd content it fills the JD pydantic state.model object"
+    "Given the jd content it fills the JD pydantic get_model_instance(model_key=state.model) object"
     content=state.jd.raw_jd
     parser=PydanticOutputParser(pydantic_object=JD)
     prompt=PromptTemplate(template="""You are good at extracting and filling data in a given template.
                           Task is to fill template: \n{template}, based on given content:\n{content}, return the output in STRICT format :\n{template}"""
                           ,input_variables=["content"],partial_variables={"template":parser.get_format_instructions()})
-    chain=prompt | state.model | parser
+    chain=prompt | get_model_instance(model_key=state.model) | parser
     output=chain.invoke({"content":content})
     return {"jd":output}
 
@@ -334,7 +406,7 @@ Only return the field names or types of data that are missing.
 """,
         input_variables=["resume", "template"]
     )
-    chain = prompt | state.model | StrOutputParser()
+    chain = prompt | get_model_instance(model_key=state.model) | StrOutputParser()
     output = chain.invoke({"resume": state.thought, "template": template_parser.get_format_instructions()})
     thought = state.thought + "\n" + output
     return {"thought": thought}
@@ -356,7 +428,7 @@ Return your output in the following STRICT format:
         input_variables=["missing","resume"],
         partial_variables={"format": parser.get_format_instructions()}
     )
-    chain = prompt | state.model | parser
+    chain = prompt | get_model_instance(model_key=state.model) | parser
     thought = state.thought
     missing = thought.split("\n")[-1]
     previous_thought = "\n".join(thought.split("\n")[:-1])
@@ -387,7 +459,7 @@ def fill_details(state: ModelState) -> ModelState:
         partial_variables={"format_instructions": parser.get_format_instructions()}
     )
 
-    chain = prompt | state.model | parser
+    chain = prompt | get_model_instance(model_key=state.model) | parser
     output=chain.invoke({"candidate_data": state.thought})
 
     return {"candidate_details":output}
@@ -419,7 +491,7 @@ Respond ONLY with the improved resume content.
         input_variables=["jd", "thought","questions"]
     )
 
-    chain = prompt | state.model | StrOutputParser()
+    chain = prompt | get_model_instance(model_key=state.model) | StrOutputParser()
     improved_resume = chain.invoke({"jd": state.jd, "thought": state.thought,"questions":state.questions})
 
     return {"thought": improved_resume}
@@ -590,7 +662,7 @@ Write in a polite, concise tone. Don't assume familiarity.
 
     chain = (
         prompt
-        | state.model  # or whatever LLM you use
+        | get_model_instance(model_key=state.model)  # or whatever LLM you use
         | StrOutputParser()
     )
 

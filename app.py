@@ -5,6 +5,21 @@ from pydantic import TypeAdapter
 from langchain_google_genai import GoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langchain_perplexity import ChatPerplexity
+import streamlit as st
+from tools import ensure_google_creds
+import os
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"   # DEV ONLY: allow http (no TLS)
+# optional but handy when scopes differ slightly:
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
+
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.metadata.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
 
 # ---------- Constants ----------
 MODEL_OPTIONS = [
@@ -74,12 +89,14 @@ if st.session_state.phase == "processing":
                 f.write(st.session_state.uploaded_file.getvalue())
 
             model_instance = get_model_instance(st.session_state.model_choice)
-
+            creds = ensure_google_creds(SCOPES) 
             init_state = ModelState(
                 file_path=file_path,
                 jd={"raw_jd": st.session_state.jd_text},
-                model=model_instance
+                model=model_instance,
+                gmail_auth_creds=creds
             )
+
             raw_state = getting_input_graph.invoke(init_state)
 
             st.session_state.state = raw_state if isinstance(raw_state, ModelState) else TypeAdapter(ModelState).validate_python(raw_state)
