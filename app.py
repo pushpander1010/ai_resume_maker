@@ -14,12 +14,14 @@ os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 
 SCOPES = [
+    "openid", "email", "profile",               # 👈 add these
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/drive.metadata.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
+
 
 # ---------- Constants ----------
 MODEL_OPTIONS = [
@@ -43,6 +45,19 @@ def get_model_instance(model_key: str):
         return ChatPerplexity(model=model_id, temperature=0.7)
     else:
         raise ValueError(f"Unknown model: {model_key}")
+
+col1, col2 = st.columns([3,1])
+with col1:
+    if st.session_state.get("user_email"):
+        st.caption(f"Signed in as **{st.session_state.user_email}**")
+with col2:
+    if st.session_state.get("user_sub"):
+        if st.button("Sign out"):
+            # Just clear session; optionally delete token file too
+            # os.remove(os.path.join("tokens", f"{st.session_state.user_sub}.pickle"))
+            st.session_state.user_sub = None
+            st.session_state.user_email = None
+            st.rerun()
 
 # ---------- Page Setup ----------
 st.set_page_config(page_title="Resume AI Assistant", layout="centered")

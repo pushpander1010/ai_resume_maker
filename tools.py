@@ -81,82 +81,85 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 
-
 def _clear_query_params():
     try:
-        st.query_params.clear()          # Streamlit >= 1.30
+        st.query_params.clear()
     except Exception:
-        st.experimental_set_query_params()  # legacy
+        st.experimental_set_query_params()
+
+
+def _tokens_dir() -> str:
+    path = "tokens"
+    pathlib.Path(path).mkdir(exist_ok=True)
+    return path
+
+
+def _save_creds_for_user(creds: Credentials, client_id: str) -> tuple[str, str]:
+    """Return (user_sub, email) and persist token to tokens/{sub}.pickle."""
+    # Ensure we have an ID token (needs openid/email/profile scopes)
+    if not creds.id_token:
+        # try to refresh to get id_token
+        creds.refresh(Request())
+
+    idinfo = google_id_token.verify_oauth2_token(
+        creds.id_token, google_requests.Request(), client_id
+    )
+    user_sub = idinfo["sub"]
+    email = idinfo.get("email", "")
+
+    with open(os.path.join(_tokens_dir(), f"{user_sub}.pickle"), "wb") as f:
+        pickle.dump(creds, f)
+
+    return user_sub, email
+
+
+def _load_creds_for_user(user_sub: str) -> Optional[Credentials]:
+    p = os.path.join(_tokens_dir(), f"{user_sub}.pickle")
+    if not os.path.exists(p):
+        return None
+    try:
+        creds = pickle.load(open(p, "rb"))
+    except Exception:
+        return None
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            pickle.dump(creds, open(p, "wb"))
+        except Exception:
+            return None
+    return creds if creds and creds.valid else None
 
 
 def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Credentials:
-    """
-    Same-tab OAuth using explicit env/secrets:
-      GOOGLE_CLIENT_ID
-      GOOGLE_CLIENT_SECRET
-      GOOGLE_REDIRECT_URI   (e.g., http://localhost:8501/ OR https://<app>.streamlit.app/)
-    - Reuses token.pickle; refreshes when expired (or force_refresh=True).
-    - If not logged in, redirects to Google; after return exchanges ?code and reruns.
-    - Fails fast with helpful errors if misconfigured.
-    """
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
     redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
 
-    # -------- Guardrails
     if not client_id or not client_secret:
-        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in environment or Streamlit secrets.")
+        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.")
         st.stop()
-    if not redirect_uri:
-        st.error("Missing GOOGLE_REDIRECT_URI. Set to your app URL with trailing slash "
-                 "(e.g., http://localhost:8501/ or https://<your-app>.streamlit.app/).")
-        st.stop()
-    if not redirect_uri.endswith("/"):
-        st.error(f"GOOGLE_REDIRECT_URI must end with '/'. Got: {redirect_uri}")
+    if not redirect_uri or not redirect_uri.endswith("/"):
+        st.error("Set GOOGLE_REDIRECT_URI to your app URL with trailing slash.")
         st.stop()
     if "streamlit.app" in redirect_uri and not redirect_uri.startswith("https://"):
-        st.error("On Streamlit Cloud, GOOGLE_REDIRECT_URI must begin with https://")
+        st.error("On Streamlit Cloud, GOOGLE_REDIRECT_URI must be https://")
         st.stop()
 
-    # Local dev: allow http for oauthlib (DEV ONLY)
+    # Local HTTP dev relax
     if redirect_uri.startswith("http://"):
         os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
         os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-    client_config = {
-        "web": {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri],                 # full exact URL
-            "javascript_origins": [redirect_uri.rstrip("/")],# origin only
-        }
-    }
+    # Try per-user cached creds
+    st.session_state.setdefault("user_sub", None)
+    st.session_state.setdefault("user_email", None)
 
-    token_path = "token.pickle"
-    creds: Optional[Credentials] = None
+    if st.session_state.user_sub and not force_refresh:
+        cached = _load_creds_for_user(st.session_state.user_sub)
+        if cached:
+            return cached
 
-    # -------- Cached token
-    if not force_refresh and os.path.exists(token_path):
-        try:
-            with open(token_path, "rb") as f:
-                creds = pickle.load(f)
-        except Exception:
-            creds = None  # corrupted token
-
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                with open(token_path, "wb") as f:
-                    pickle.dump(creds, f)
-            except Exception:
-                creds = None
-
-    if creds and creds.valid:
-        return creds
-
-    # -------- Read query params (for ?code after Google sends us back)
+    # Check for Google callback
     try:
         qp = dict(st.query_params)
     except Exception:
@@ -173,50 +176,45 @@ def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Cr
         _clear_query_params()
         st.stop()
 
+    client_config = {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/v2/auth",  # v2 endpoint
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [redirect_uri],
+            "javascript_origins": [redirect_uri.rstrip("/")],
+        }
+    }
+
     flow = Flow.from_client_config(client_config, scopes=scopes)
     flow.redirect_uri = redirect_uri
 
-    # -------- Callback: exchange code -> tokens
     if code:
         query = urllib.parse.urlencode(
             {k: (v[0] if isinstance(v, list) else v) for k, v in qp.items()},
             doseq=True
         )
         authorization_response = f"{redirect_uri}?{query}"
-        try:
-            flow.fetch_token(authorization_response=authorization_response)
-        except Exception as e:
-            # helpful hint when redirect URI is wrong
-            st.error(f"Failed to fetch token. Double-check that this exact redirect URI is added "
-                     f"in your OAuth client:\n\n{redirect_uri}\n\nDetails: {e}")
-            st.stop()
-
+        flow.fetch_token(authorization_response=authorization_response)
         creds = flow.credentials
-        with open(token_path, "wb") as f:
-            pickle.dump(creds, f)
 
-        _clear_query_params()  # remove ?code etc.
+        user_sub, email = _save_creds_for_user(creds, client_id)
+        st.session_state.user_sub = user_sub
+        st.session_state.user_email = email
+
+        _clear_query_params()
         st.rerun()
 
-    # -------- Kick off OAuth (same tab)
-    # -------- Kick off OAuth (DIAGNOSTIC MODE: no auto-redirect)
+    # Kick off auth — force account chooser so every user can pick their account
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
-        prompt="consent",
+        prompt="consent select_account",   # 👈 show chooser every time
     )
-
-    st.write("📎 OAuth request being sent to Google:")
-    st.code({
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "scopes": scopes,
-        "auth_url": auth_url
-    }, language="json")
-
-    st.write("Click this link to open Google's page:")
-    st.write(auth_url)
+    st.link_button("Continue with Google", auth_url)
     st.stop()
+
 
 def get_model_instance(model_key):
     if not isinstance(model_key, str):
