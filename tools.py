@@ -67,70 +67,101 @@ def write_email(state:ModelState)->ModelState:
     output=chain.invoke({"candidate_details":state.candidate_details,"jd":state.jd})
     return {"gmail_message":output}
 
+import streamlit as st
+
 def _ensure_google_creds(scopes: list[str]):
     """
-    Works in:
-    - Local dev: opens browser automatically
-    - Streamlit Cloud / mobile: shows link + input box for auth code
+    Streamlit/mobile-safe OAuth (no copy-paste):
+    - Uses Web OAuth client & a real redirect URI (your Streamlit app URL).
+    - User clicks "Sign in with Google" → Google → returns with ?code=...
+    - We detect ?code in query params and exchange for tokens.
+    - Token cached in token.pickle for reuse.
     """
+    import os, pickle, urllib.parse
+    from google_auth_oauthlib.flow import Flow
+    from google.auth.transport.requests import Request
 
-    client_id = os.environ.get("GOOGLE_CLIENT_ID")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in environment variables.")
+    # Read config from secrets/env
+    client_id = (st.secrets["google"]["client_id"]
+                 if "google" in st.secrets else os.environ.get("GOOGLE_CLIENT_ID"))
+    client_secret = (st.secrets["google"]["client_secret"]
+                     if "google" in st.secrets else os.environ.get("GOOGLE_CLIENT_SECRET"))
+    redirect_uri = (st.secrets["google"]["redirect_uri"]
+                    if "google" in st.secrets else os.environ.get("GOOGLE_REDIRECT_URI"))
+
+    if not client_id or not client_secret or not redirect_uri:
+        st.error("Google OAuth not configured: client_id / client_secret / redirect_uri")
         st.stop()
 
     client_config = {
-        "installed": {
+        "web": {
             "client_id": client_id,
             "client_secret": client_secret,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": ["http://localhost"]
+            "redirect_uris": [redirect_uri],
+            "javascript_origins": [redirect_uri.rstrip("/")]
         }
     }
 
     token_path = "token.pickle"
     creds = None
 
-    # 1️⃣ Load saved token if any
+    # 1) Try cached token
     if os.path.exists(token_path):
         with open(token_path, "rb") as f:
             creds = pickle.load(f)
 
-    # 2️⃣ Refresh or request new auth
+    # 2) Refresh or re-auth
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Build flow for Web client
+            flow = Flow.from_client_config(client_config, scopes=scopes)
+            flow.redirect_uri = redirect_uri
+
+            # If Google redirected back with a ?code, finish the exchange
+            # Streamlit query params as dict[str, list[str]]
             try:
-                # Local desktop flow
-                flow = InstalledAppFlow.from_client_config(client_config, scopes)
-                creds = flow.run_local_server(port=8080, prompt="consent")
+                qp = st.query_params  # Streamlit >= 1.30
             except Exception:
-                # Streamlit / mobile fallback flow
-                flow = Flow.from_client_config(client_config, scopes=scopes)
-                flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-                auth_url, _ = flow.authorization_url(prompt="consent")
+                qp = st.experimental_get_query_params()
 
-                st.markdown(
-                    f"### 🔗 Step 1: Click below to sign in with Google\n"
-                    f"[**Sign in with Google**]({auth_url})"
-                )
-                code = st.text_input("Step 2: Paste the authorization code here:")
+            if "code" in qp:
+                # Reconstruct the full redirect URL Google called (must match exactly)
+                # Note: Streamlit can't give us the full absolute URL; we build it:
+                query = urllib.parse.urlencode({k: v[0] if isinstance(v, list) else v for k, v in qp.items()}, doseq=True)
+                authorization_response = f"{redirect_uri}?{query}"
 
-                if st.button("Authorize"):
-                    if code.strip():
-                        flow.fetch_token(code=code.strip())
-                        creds = flow.credentials
-                        with open(token_path, "wb") as f:
-                            pickle.dump(creds, f)
-                        st.success("✅ Google authentication successful!")
-                        st.experimental_rerun()
-                    else:
-                        st.error("Please enter the authorization code.")
+                flow.fetch_token(authorization_response=authorization_response)
+                creds = flow.credentials
+
+                # Cache token and clean the URL (remove ?code=...)
+                with open(token_path, "wb") as f:
+                    pickle.dump(creds, f)
+
+                # Clear query params to avoid re-processing on rerun
+                try:
+                    st.query_params.clear()
+                except Exception:
+                    st.experimental_set_query_params()
+
+                st.rerun()
+
+            # No code yet → show sign-in button (link)
+            auth_url, _ = flow.authorization_url(
+                access_type="offline",
+                include_granted_scopes="true",
+                prompt="consent"
+            )
+
+            st.markdown("### 🔐 Sign in with Google")
+            st.link_button("Continue with Google", auth_url)
+            st.stop()
 
     return creds
+
 
 def convert_docx_to_pdf(state: ModelState) -> ModelState:
     """
