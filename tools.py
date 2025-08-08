@@ -68,6 +68,7 @@ from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 
 load_dotenv()
+# load_dotenv(dotenv_path="environ.env")
 
 
 def get_model_instance(model_key):
@@ -187,7 +188,7 @@ def ensure_google_creds(scopes: list[str]) -> Credentials:
 
     flow = Flow.from_client_config(client_config, scopes=scopes)
     flow.redirect_uri = redirect_uri
-
+    st.write(redirect_uri)
     if code:
         # Exchange code → tokens
         query = urllib.parse.urlencode(

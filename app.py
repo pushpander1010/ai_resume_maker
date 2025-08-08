@@ -48,6 +48,7 @@ def get_model_instance(model_key: str):
 st.set_page_config(page_title="Resume AI Assistant", layout="centered")
 st.title("📄 Resume AI Assistant")
 os.makedirs("input", exist_ok=True)
+creds = ensure_google_creds(SCOPES) 
 
 # ---------- Session State Setup ----------
 if "state" not in st.session_state:
@@ -89,7 +90,6 @@ if st.session_state.phase == "processing":
                 f.write(st.session_state.uploaded_file.getvalue())
 
             model_instance = get_model_instance(st.session_state.model_choice)
-            creds = ensure_google_creds(SCOPES) 
             init_state = ModelState(
                 file_path=file_path,
                 jd={"raw_jd": st.session_state.jd_text},
