@@ -71,25 +71,18 @@ def write_email(state:ModelState)->ModelState:
 
 def _ensure_google_creds(scopes: list[str]):
     """
-    Streamlit/mobile-safe OAuth (no copy-paste):
-    - Web OAuth client with real redirect URI (must match EXACTLY).
-    - Auto-redirect once. If blocked, show same-tab link fallback.
-    - Caches token in token.pickle.
+    Simple same-tab Google OAuth for Streamlit.
+    - Uses your web client_id + redirect_uri from env/secrets.
+    - Redirects to Google auth in same tab.
+    - After login, Google redirects back with ?code=..., which we exchange for a token.
+    - Token is cached in token.pickle for reuse.
     """
-    # --- session guard for one-time redirect ---
-    if "oauth_redirected" not in st.session_state:
-        st.session_state.oauth_redirected = False
-
-    # Read config
-    client_id = (st.secrets["google"]["client_id"]
-                 if "google" in st.secrets else os.environ.get("GOOGLE_CLIENT_ID"))
-    client_secret = (st.secrets["google"]["client_secret"]
-                     if "google" in st.secrets else os.environ.get("GOOGLE_CLIENT_SECRET"))
-    redirect_uri = (st.secrets["google"]["redirect_uri"]
-                    if "google" in st.secrets else os.environ.get("GOOGLE_REDIRECT_URI"))
+    client_id = st.secrets.get("google", {}).get("client_id") or os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = st.secrets.get("google", {}).get("client_secret") or os.environ.get("GOOGLE_CLIENT_SECRET")
+    redirect_uri = st.secrets.get("google", {}).get("redirect_uri") or os.environ.get("GOOGLE_REDIRECT_URI")
 
     if not client_id or not client_secret or not redirect_uri:
-        st.error("Google OAuth not configured: client_id / client_secret / redirect_uri")
+        st.error("Google OAuth not configured. Missing client_id / client_secret / redirect_uri.")
         st.stop()
 
     client_config = {
@@ -99,19 +92,19 @@ def _ensure_google_creds(scopes: list[str]):
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "redirect_uris": [redirect_uri],
-            "javascript_origins": [redirect_uri.rstrip("/")]
+            "javascript_origins": [redirect_uri.rstrip("/")],
         }
     }
 
     token_path = "token.pickle"
     creds = None
 
-    # Try cached token
+    # Try cached token first
     if os.path.exists(token_path):
         with open(token_path, "rb") as f:
             creds = pickle.load(f)
 
-    # Refresh or re-auth
+    # If no creds or invalid, start OAuth flow
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -119,59 +112,42 @@ def _ensure_google_creds(scopes: list[str]):
             flow = Flow.from_client_config(client_config, scopes=scopes)
             flow.redirect_uri = redirect_uri
 
-            # Detect ?code=... after Google redirects back
+            # Get query params from Streamlit
             try:
                 qp = st.query_params  # Streamlit >=1.30
             except Exception:
                 qp = st.experimental_get_query_params()
 
             if "code" in qp:
+                # Exchange code for token
                 query = urllib.parse.urlencode(
                     {k: (v[0] if isinstance(v, list) else v) for k, v in qp.items()},
                     doseq=True
                 )
                 authorization_response = f"{redirect_uri}?{query}"
-
                 flow.fetch_token(authorization_response=authorization_response)
                 creds = flow.credentials
 
+                # Cache token
                 with open(token_path, "wb") as f:
                     pickle.dump(creds, f)
 
-                # Clear ?code from URL and continue
+                # Clear ?code from URL
                 try:
                     st.query_params.clear()
                 except Exception:
                     st.experimental_set_query_params()
-                st.session_state.oauth_redirected = False  # reset for future runs
+
                 st.rerun()
 
-            # No code yet -> build auth URL
-            auth_url, _ = flow.authorization_url(
-                access_type="offline",
-                include_granted_scopes="true",
-                prompt="consent"
-            )
-
-            # Auto-redirect once; fallback to same-tab button if blocked
-            if not st.session_state.oauth_redirected:
-                st.session_state.oauth_redirected = True
-                st.markdown("Redirecting to Google sign-in…")
-                # Meta refresh is more reliable than JS in some environments
-                st.markdown(
-                    f'<meta http-equiv="refresh" content="0; url={auth_url}">',
-                    unsafe_allow_html=True,
-                )
-                st.stop()
             else:
-                st.info("If you were not redirected, click the button below to continue:")
-                st.markdown(
-                    f'<a href="{auth_url}" target="_self" '
-                    f'style="display:inline-block; padding:0.6rem 1rem; '
-                    f'background:#0e72ec; color:#fff; border-radius:0.5rem; text-decoration:none;">'
-                    f'Continue with Google</a>',
-                    unsafe_allow_html=True,
+                # Redirect to Google sign-in
+                auth_url, _ = flow.authorization_url(
+                    access_type="offline",
+                    include_granted_scopes="true",
+                    prompt="consent",
                 )
+                st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
                 st.stop()
 
     return creds
