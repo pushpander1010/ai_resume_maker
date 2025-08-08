@@ -3,6 +3,7 @@ from models import ModelState,Details,JD,GmailMessage,Question,QuestionList
 from langchain_community.document_loaders import TextLoader
 from langchain_google_genai import GoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
+import urllib
 import json
 import docx
 from pydantic import BaseModel
@@ -67,7 +68,6 @@ def write_email(state:ModelState)->ModelState:
     output=chain.invoke({"candidate_details":state.candidate_details,"jd":state.jd})
     return {"gmail_message":output}
 
-import streamlit as st
 
 def _ensure_google_creds(scopes: list[str]):
     """
@@ -77,9 +77,6 @@ def _ensure_google_creds(scopes: list[str]):
     - We detect ?code in query params and exchange for tokens.
     - Token cached in token.pickle for reuse.
     """
-    import os, pickle, urllib.parse
-    from google_auth_oauthlib.flow import Flow
-    from google.auth.transport.requests import Request
 
     # Read config from secrets/env
     client_id = (st.secrets["google"]["client_id"]
@@ -150,6 +147,7 @@ def _ensure_google_creds(scopes: list[str]):
                 st.rerun()
 
             # No code yet → show sign-in button (link)
+            # No code yet → show sign-in link that opens in SAME TAB
             auth_url, _ = flow.authorization_url(
                 access_type="offline",
                 include_granted_scopes="true",
@@ -157,8 +155,14 @@ def _ensure_google_creds(scopes: list[str]):
             )
 
             st.markdown("### 🔐 Sign in with Google")
-            st.link_button("Continue with Google", auth_url)
+
+            # Use a normal anchor tag so we can set target="_self"
+            st.markdown(
+                f'<a href="{auth_url}" target="_self" style="display:inline-block; padding:0.6rem 1rem; background:#0e72ec; color:#fff; border-radius:0.5rem; text-decoration:none;">Continue with Google</a>',
+                unsafe_allow_html=True,
+            )
             st.stop()
+
 
     return creds
 
