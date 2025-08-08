@@ -67,9 +67,132 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 
-load_dotenv()
-# load_dotenv(dotenv_path="environ.env")
+#load_dotenv()
+load_dotenv(dotenv_path="environ.env")
 
+
+import os, io, pickle, urllib
+from typing import Optional
+from urllib.parse import urlparse
+
+import streamlit as st
+import streamlit.components.v1 as components
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+
+
+def _clear_query_params():
+    try:
+        st.query_params.clear()
+    except Exception:
+        st.experimental_set_query_params()
+
+def ensure_google_creds(scopes: list[str]) -> Credentials:
+    """
+    Same-tab OAuth using explicit redirect_uri from env/secrets.
+    - For Cloud: set GOOGLE_REDIRECT_URI=https://<your-app>.streamlit.app/
+    - For local: set GOOGLE_REDIRECT_URI=http://localhost:8501/
+    """
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")  # REQUIRED on Cloud
+
+    if not client_id or not client_secret:
+        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET")
+        st.stop()
+
+    # default local fallback if not provided
+    if not redirect_uri:
+        redirect_uri = "http://localhost:8501/"
+
+    # Local http dev needs this
+    if redirect_uri.startswith("http://"):
+        os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+        os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
+    # Guardrails to avoid the classic mismatch
+    if "streamlit.app" in redirect_uri and not redirect_uri.startswith("https://"):
+        st.error("On Streamlit Cloud, GOOGLE_REDIRECT_URI must be https://…/")
+        st.stop()
+    if not redirect_uri.endswith("/"):
+        st.error("GOOGLE_REDIRECT_URI must end with a trailing slash, e.g. https://ai-resumer.streamlit.app/")
+        st.stop()
+
+    client_config = {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [redirect_uri],       # full exact URL
+            "javascript_origins": [redirect_uri.rstrip("/")],  # origin only
+        }
+    }
+
+    token_path = "token.pickle"
+    creds: Optional[Credentials] = None
+
+    # Try cached token first
+    if os.path.exists(token_path):
+        with open(token_path, "rb") as f:
+            creds = pickle.load(f)
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(token_path, "wb") as f:
+                    pickle.dump(creds, f)
+            except Exception:
+                creds = None
+    if creds and creds.valid:
+        return creds
+
+    # Read query params (for ?code after Google redirects back)
+    try:
+        qp = dict(st.query_params)
+    except Exception:
+        qp = st.experimental_get_query_params()
+
+    def _one(k):
+        v = qp.get(k)
+        return v[0] if isinstance(v, list) else v
+
+    code = _one("code")
+    error = _one("error")
+    if error:
+        st.error(f"OAuth error: {error}")
+        _clear_query_params()
+        st.stop()
+
+    flow = Flow.from_client_config(client_config, scopes=scopes)
+    flow.redirect_uri = redirect_uri
+
+    if code:
+        # Exchange code → tokens (preserve all params)
+        query = urllib.parse.urlencode(
+            {k: (v[0] if isinstance(v, list) else v) for k, v in qp.items()},
+            doseq=True
+        )
+        authorization_response = f"{redirect_uri}?{query}"
+        flow.fetch_token(authorization_response=authorization_response)
+        creds = flow.credentials
+
+        with open(token_path, "wb") as f:
+            pickle.dump(creds, f)
+
+        _clear_query_params()  # remove ?code
+        st.rerun()
+
+    # Kick off OAuth (same tab)
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    # Show link (useful to see exact Google error if any)
+    st.link_button("Continue with Google", auth_url)
+    st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
+    st.stop()
 
 def get_model_instance(model_key):
     if not isinstance(model_key, str):
@@ -110,112 +233,6 @@ def write_email(state: ModelState) -> ModelState:
     output = chain.invoke({"candidate_details": state.candidate_details, "jd": state.jd})
     return {"gmail_message": output}
 
-
-def _origin(u: str) -> str:
-    p = urlparse(u)
-    o = f"{p.scheme}://{p.hostname}"
-    if p.port:
-        o += f":{p.port}"
-    return o
-
-def _clear_query_params():
-    try:
-        st.query_params.clear()        # Streamlit >= 1.30
-    except Exception:
-        st.experimental_set_query_params()  # legacy
-
-def ensure_google_creds(scopes: list[str]) -> Credentials:
-    """
-    Same-tab OAuth. Runs before any UI.
-    - Uses WEB OAuth client with exact redirect_uri (this app's URL).
-    - Reuses token.pickle if present; refreshes when expired.
-    - If not authenticated, redirects to Google and stops the app.
-    - After return with ?code, exchanges token, saves, clears URL, reruns.
-    """
-    client_id = os.environ.get("GOOGLE_CLIENT_ID")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")  # e.g. "http://localhost:8501/"
-
-    if not client_id or not client_secret or not redirect_uri:
-        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI")
-        st.stop()
-
-    client_config = {
-        "web": {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri],                  # full URL, EXACT match
-            "javascript_origins": [_origin(redirect_uri)],    # origin only
-        }
-    }
-
-    token_path = "token.pickle"
-    creds: Optional[Credentials] = None
-
-    # 1) Try cached token
-    if os.path.exists(token_path):
-        with open(token_path, "rb") as f:
-            creds = pickle.load(f)
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                with open(token_path, "wb") as f:
-                    pickle.dump(creds, f)
-            except Exception:
-                creds = None
-    if creds and creds.valid:
-        return creds
-
-    # 2) Check if we're on the return leg (?code in URL)
-    try:
-        qp = dict(st.query_params)  # >= 1.30
-    except Exception:
-        qp = st.experimental_get_query_params()
-
-    def _one(k):
-        v = qp.get(k)
-        return v[0] if isinstance(v, list) else v
-
-    code = _one("code")
-    state = _one("state")
-    error = _one("error")
-    if error:
-        st.error(f"OAuth error: {error}")
-        _clear_query_params()
-        st.stop()
-
-    flow = Flow.from_client_config(client_config, scopes=scopes)
-    flow.redirect_uri = redirect_uri
-    st.write(redirect_uri)
-    if code:
-        # Exchange code → tokens
-        query = urllib.parse.urlencode(
-            {k: (v[0] if isinstance(v, list) else v) for k, v in qp.items()},
-            doseq=True
-        )
-        authorization_response = f"{redirect_uri}?{query}"
-        flow.fetch_token(authorization_response=authorization_response)
-        creds = flow.credentials
-
-        with open(token_path, "wb") as f:
-            pickle.dump(creds, f)
-
-        # Clean URL and rerun without query params
-        _clear_query_params()
-        st.rerun()
-
-    # 3) Not authenticated yet → send to Google (same tab)
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",  # must be lowercase string
-        prompt="consent",               # ensures refresh_token on first grant
-    )
-    st.markdown(
-        f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True
-    )
-    st.stop()
 
 def convert_docx_to_pdf(state: ModelState) -> ModelState:
     """
