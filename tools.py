@@ -67,7 +67,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 
-load_dotenv(dotenv_path="environ.env")
+load_dotenv()
 
 
 def get_model_instance(model_key):
