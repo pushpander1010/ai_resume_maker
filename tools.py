@@ -89,6 +89,7 @@ from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
+from oauthlib.oauth2.rfc6749.errors import InvalidGrantError
 
 def _clear_query_params():
     try:
@@ -101,42 +102,6 @@ def _tokens_dir() -> str:
     path = "tokens"
     pathlib.Path(path).mkdir(exist_ok=True)
     return path
-
-
-def _save_creds_for_user(creds: Credentials, client_id: str) -> tuple[str, str]:
-    """Return (user_sub, email) and persist token to tokens/{sub}.pickle."""
-    # Ensure we have an ID token (needs openid/email/profile scopes)
-    if not creds.id_token:
-        # try to refresh to get id_token
-        creds.refresh(Request())
-
-    idinfo = google_id_token.verify_oauth2_token(
-        creds.id_token, google_requests.Request(), client_id
-    )
-    user_sub = idinfo["sub"]
-    email = idinfo.get("email", "")
-
-    with open(os.path.join(_tokens_dir(), f"{user_sub}.pickle"), "wb") as f:
-        pickle.dump(creds, f)
-
-    return user_sub, email
-
-
-def _load_creds_for_user(user_sub: str) -> Optional[Credentials]:
-    p = os.path.join(_tokens_dir(), f"{user_sub}.pickle")
-    if not os.path.exists(p):
-        return None
-    try:
-        creds = pickle.load(open(p, "rb"))
-    except Exception:
-        return None
-    if creds and creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            pickle.dump(creds, open(p, "wb"))
-        except Exception:
-            return None
-    return creds if creds and creds.valid else None
 
 
 def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Credentials:
@@ -159,16 +124,41 @@ def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Cr
         os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
         os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-    # Try per-user cached creds
-    st.session_state.setdefault("user_sub", None)
-    st.session_state.setdefault("user_email", None)
+    # Session guards to avoid double-exchange
+    st.session_state.setdefault("oauth_code_exchanged", False)
 
-    if st.session_state.user_sub and not force_refresh:
-        cached = _load_creds_for_user(st.session_state.user_sub)
-        if cached:
-            return cached
+    client_config = {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/v2/auth",  # use v2
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [redirect_uri],
+            "javascript_origins": [redirect_uri.rstrip("/")],
+        }
+    }
 
-    # Check for Google callback
+    # ---------- per-user token (optional; keep your previous per-user logic if you added it)
+    token_path = "token.pickle"
+    creds: Optional[Credentials] = None
+
+    if not force_refresh and os.path.exists(token_path):
+        try:
+            with open(token_path, "rb") as f:
+                creds = pickle.load(f)
+        except Exception:
+            creds = None
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(token_path, "wb") as f:
+                    pickle.dump(creds, f)
+            except Exception:
+                creds = None
+    if creds and creds.valid:
+        return creds
+
+    # ---------- read query params
     try:
         qp = dict(st.query_params)
     except Exception:
@@ -185,41 +175,52 @@ def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Cr
         _clear_query_params()
         st.stop()
 
-    client_config = {
-        "web": {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/v2/auth",  # v2 endpoint
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri],
-            "javascript_origins": [redirect_uri.rstrip("/")],
-        }
-    }
-
     flow = Flow.from_client_config(client_config, scopes=scopes)
     flow.redirect_uri = redirect_uri
 
-    if code:
+    # ---------- callback: exchange once
+    if code and not st.session_state.oauth_code_exchanged:
         query = urllib.parse.urlencode(
             {k: (v[0] if isinstance(v, list) else v) for k, v in qp.items()},
             doseq=True
         )
         authorization_response = f"{redirect_uri}?{query}"
-        flow.fetch_token(authorization_response=authorization_response)
+        try:
+            flow.fetch_token(authorization_response=authorization_response)
+        except InvalidGrantError as e:
+            # Most common: code already used or redirect mismatch. Reset and restart auth.
+            _clear_query_params()
+            st.session_state.oauth_code_exchanged = False
+            # Kick off fresh authorization
+            auth_url, _ = flow.authorization_url(
+                access_type="offline",
+                include_granted_scopes="true",
+                prompt="consent select_account",
+            )
+            st.link_button("Continue with Google", auth_url)
+            st.stop()
+        except Exception as e:
+            st.error(f"Failed to fetch token. Check the exact redirect URI on your OAuth client:\n{redirect_uri}\n\nDetails: {e}")
+            _clear_query_params()
+            st.stop()
+
         creds = flow.credentials
+        with open(token_path, "wb") as f:
+            pickle.dump(creds, f)
 
-        user_sub, email = _save_creds_for_user(creds, client_id)
-        st.session_state.user_sub = user_sub
-        st.session_state.user_email = email
-
+        st.session_state.oauth_code_exchanged = True
         _clear_query_params()
         st.rerun()
 
-    # Kick off auth — force account chooser so every user can pick their account
+    # If code is present BUT we already exchanged it (rerun), just wait for rerun to finish
+    if code and st.session_state.oauth_code_exchanged:
+        st.stop()
+
+    # ---------- start auth (same tab)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
-        prompt="consent select_account",   # 👈 show chooser every time
+        prompt="consent select_account",
     )
     st.link_button("Continue with Google", auth_url)
     st.stop()
