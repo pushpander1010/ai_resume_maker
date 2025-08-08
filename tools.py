@@ -199,16 +199,24 @@ def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Cr
         st.rerun()
 
     # -------- Kick off OAuth (same tab)
+    # -------- Kick off OAuth (DIAGNOSTIC MODE: no auto-redirect)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
-    # Show link (helps read Google’s error if any) + auto-redirect
-    st.link_button("Continue with Google", auth_url)
-    st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
-    st.stop()
 
+    st.write("📎 OAuth request being sent to Google:")
+    st.code({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scopes": scopes,
+        "auth_url": auth_url
+    }, language="json")
+
+    st.write("Click this link to open Google's page:")
+    st.write(auth_url)
+    st.stop()
 
 def get_model_instance(model_key):
     if not isinstance(model_key, str):
