@@ -626,148 +626,324 @@ Respond ONLY with the improved resume content.
     return {"thought": improved_resume}
 
 def make_resume_docx(state: ModelState) -> ModelState:
-    print("Making word docx file")
+    """
+    Generates a clean, ATS-friendly resume:
+    - 0.5" margins, compact spacing, single-column body
+    - Big centered name, contact line, thin rule below header
+    - Consistent SECTION HEADERS
+    - Experience/projects/education rows with right-aligned dates (via borderless 2-col tables)
+    - Tight bullets and safe date formatting
+    """
+    import os
+    from datetime import date, datetime
+    from docx import Document
+    from docx.shared import Pt, Inches, RGBColor
+    from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    def fmt_date(d):
+        """Robust 'Mon YYYY' for date/str/None"""
+        if not d:
+            return ""
+        try:
+            if isinstance(d, (date, datetime)):
+                return d.strftime("%b %Y")
+            # handle likely strings like '2023-05' or 'May 2023'
+            # try multiple parses but avoid external libs
+            for fmt in ("%Y-%m-%d", "%Y-%m", "%d-%m-%Y", "%m/%d/%Y", "%b %Y", "%B %Y", "%Y"):
+                try:
+                    return datetime.strptime(str(d), fmt).strftime("%b %Y")
+                except Exception:
+                    pass
+            return str(d)
+        except Exception:
+            return str(d)
+
+    def join_clean(items, sep=" • "):
+        return sep.join([s for s in items if s])
+
     doc = Document()
 
-    # === Format settings ===
-    # Page margins
+    # === Page & base font ===
     for section in doc.sections:
         section.top_margin = Inches(0.5)
         section.bottom_margin = Inches(0.5)
         section.left_margin = Inches(0.5)
         section.right_margin = Inches(0.5)
 
-    # Font
-    style = doc.styles['Normal']
-    font = style.font
-    font.name = 'Calibri'
-    style._element.rPr.rFonts.set(qn('w:eastAsia'), 'Calibri')
-    font.size = Pt(10)
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    # ensure asian font too
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+    normal.font.size = Pt(10.5)
 
-    # === Helpers ===
-    def set_spacing(p):
-        fmt = p.paragraph_format
-        fmt.space_before = Pt(2)
-        fmt.space_after = Pt(2)
-        fmt.line_spacing = 1.0
+    # === Custom styles (idempotent creation) ===
+    def ensure_style(name, base="Normal", size=10.5, bold=False, all_caps=False, color=RGBColor(0, 0, 0)):
+        try:
+            st = doc.styles[name]
+        except KeyError:
+            st = doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+            st.base_style = doc.styles[base]
+        st.font.name = "Calibri"
+        st._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+        st.font.size = Pt(size)
+        st.font.bold = bold
+        st.font.all_caps = all_caps
+        st.font.color.rgb = color
+        st.paragraph_format.space_before = Pt(0)
+        st.paragraph_format.space_after = Pt(2)
+        st.paragraph_format.line_spacing = 1.05
+        return st
 
-    def add_title(text: str):
-        p = doc.add_paragraph(text.upper())
-        p.runs[0].bold = True
-        set_spacing(p)
+    ensure_style("SectionHeader", size=10, bold=True, all_caps=True, color=RGBColor(45, 45, 45))
+    ensure_style("HeaderName", size=20, bold=True, all_caps=True)
+    ensure_style("HeaderContact", size=10)
+    ensure_style("Tight", size=10.5)
+    # Tight bullets derived from List Bullet
+    try:
+        tight_bullet = doc.styles["TightBullet"]
+    except KeyError:
+        tight_bullet = doc.styles.add_style("TightBullet", WD_STYLE_TYPE.PARAGRAPH)
+        tight_bullet.base_style = doc.styles.get("List Bullet")
+        pf = tight_bullet.paragraph_format
+        pf.left_indent = Inches(0.2)
+        pf.first_line_indent = Inches(-0.12)
+        pf.space_before = Pt(0)
+        pf.space_after = Pt(2)
+        pf.line_spacing = 1.05
 
-    def add_bullets(items: list[str]):
-        for item in items:
-            p = doc.add_paragraph(item, style='List Bullet')
-            set_spacing(p)
+    def set_spacing(p, before=0, after=2, line=1.05):
+        pf = p.paragraph_format
+        pf.space_before = Pt(before)
+        pf.space_after = Pt(after)
+        pf.line_spacing = line
 
+    # Hyperlink helper (blue + underline, ATS-safe)
     def add_hyperlink(paragraph, text, url):
         part = paragraph.part
-        r_id = part.relate_to(url, 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink', is_external=True)
-        hyperlink = OxmlElement('w:hyperlink')
-        hyperlink.set(qn('r:id'), r_id)
+        r_id = part.relate_to(
+            url,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            is_external=True,
+        )
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), r_id)
 
-        new_run = OxmlElement('w:r')
-        rPr = OxmlElement('w:rPr')
-        color = OxmlElement('w:color')
-        color.set(qn('w:val'), "000000")
-        u = OxmlElement('w:u')
-        u.set(qn('w:val'), "none")
+        new_run = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), "1155CC")  # link blue
+        u = OxmlElement("w:u")
+        u.set(qn("w:val"), "single")
         rPr.append(color)
         rPr.append(u)
         new_run.append(rPr)
-        text_node = OxmlElement('w:t')
+        text_node = OxmlElement("w:t")
         text_node.text = text
         new_run.append(text_node)
         hyperlink.append(new_run)
         paragraph._p.append(hyperlink)
         return paragraph
 
+    # Borderless table helper for aligned rows (title/left + date/right)
+    def add_row_2col(left_text, right_text, left_bold=False):
+        table = doc.add_table(rows=1, cols=2)
+        # remove borders
+        tbl = table._tbl
+        tblPr = tbl.tblPr
+        borders = tblPr.tblBorders if hasattr(tblPr, "tblBorders") else OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            elem = OxmlElement(f"w:{edge}")
+            elem.set(qn("w:val"), "nil")
+            borders.append(elem)
+        tblPr.append(borders)
+
+        # widths
+        table.columns[0].width = Inches(5.8)
+        table.columns[1].width = Inches(1.6)
+
+        left, right = table.rows[0].cells
+        p_left = left.paragraphs[0]
+        run_left = p_left.add_run(left_text)
+        run_left.bold = left_bold
+        set_spacing(p_left, after=0)
+
+        p_right = right.paragraphs[0]
+        p_right.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+        p_right.add_run(right_text)
+        set_spacing(p_right, after=0)
+
+        return table
+
+    # Simple horizontal rule (1-row table with bottom border)
+    def add_rule():
+        t = doc.add_table(rows=1, cols=1)
+        tbl = t._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "6")
+        bottom.set(qn("w:color"), "999999")
+        borders.append(bottom)
+        tblPr.append(borders)
+        # remove cell text spacing
+        t.rows[0].cells[0].paragraphs[0].add_run("")
+        set_spacing(t.rows[0].cells[0].paragraphs[0], after=2)
+
     # === Header ===
-    if state.candidate_details.name:
-        name_para = doc.add_paragraph(state.candidate_details.name.upper())
+    # Name
+    if getattr(state.candidate_details, "name", None):
+        name_para = doc.add_paragraph(style="HeaderName")
         name_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        name_para.runs[0].bold = True
-        name_para.runs[0].font.size = Pt(20)
-        set_spacing(name_para)
+        name_para.add_run(state.candidate_details.name.upper())
+        set_spacing(name_para, after=2)
+    # Contact line (centered, bullet separated)
+    contact_para = doc.add_paragraph(style="HeaderContact")
+    contact_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    contact_bits = []
 
-        contact = doc.add_paragraph()
-        contact.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    if getattr(state.candidate_details, "email", None):
+        contact_bits.append(("mailto:" + state.candidate_details.email, state.candidate_details.email))
+    if getattr(state.candidate_details, "phone", None):
+        # 'tel:' works on mobile; ATS won’t mind
+        contact_bits.append(("tel:" + state.candidate_details.phone, state.candidate_details.phone))
+    # profiles: expect list of objects with .url (fallback: string)
+    profiles = getattr(state.candidate_details, "profiles", []) or []
+    for prof in profiles:
+        url = getattr(prof, "url", None) if hasattr(prof, "url") else str(prof)
+        if url:
+            contact_bits.append((url, url))
 
-    if state.candidate_details.email:
-        add_hyperlink(contact, state.candidate_details.email, f"mailto:{state.candidate_details.email}")
-        contact.add_run(" | ")
+    # Render contact bits with bullets
+    for i, (url, text) in enumerate(contact_bits):
+        add_hyperlink(contact_para, text, url)
+        if i < len(contact_bits) - 1:
+            contact_para.add_run("  •  ")
+    set_spacing(contact_para, after=6)
 
-    if state.candidate_details.phone:
-        add_hyperlink(contact, state.candidate_details.phone, f"tel:{state.candidate_details.phone}")
-        contact.add_run(" | ")
-    if state.candidate_details.profiles:
-        for i, profile in enumerate(state.candidate_details.profiles):
-            add_hyperlink(contact, profile.url, profile.url)
-            if i < len(state.candidate_details.profiles) - 1:
-                contact.add_run(" | ")
-        set_spacing(contact)
+    # Thin rule under header
+    add_rule()
 
     # === Summary ===
-    if state.candidate_details.summary:
-        add_title("Summary")
-        p = doc.add_paragraph(state.candidate_details.summary)
-        set_spacing(p)
+    summary = getattr(state.candidate_details, "summary", None)
+    if summary:
+        p = doc.add_paragraph("Summary", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+        p = doc.add_paragraph(summary, style="Tight")
 
-    # === Skills ===
-    if state.candidate_details.skills:
-        add_title("Skills")
-        p = doc.add_paragraph(", ".join(state.candidate_details.skills))
-        set_spacing(p)
+    # === Skills (compact, multi-line) ===
+    skills = getattr(state.candidate_details, "skills", None)
+    if skills:
+        p = doc.add_paragraph("Skills", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+        # show as wrapped text with separators to conserve space
+        p = doc.add_paragraph(join_clean(list(map(str, skills))), style="Tight")
 
     # === Experience ===
-    if state.candidate_details.experience:
-        add_title("Professional Experience")
-        for exp in state.candidate_details.experience:
-            title_line = f"{exp.title}, {exp.company} ({exp.start_date} - {exp.end_date or 'Present'})"
-            p = doc.add_paragraph(title_line)
-            p.runs[0].bold = True
-            set_spacing(p)
-            add_bullets(exp.responsibilities)
+    experience = getattr(state.candidate_details, "experience", None)
+    if experience:
+        p = doc.add_paragraph("Professional Experience", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+
+        for exp in experience:
+            title = getattr(exp, "title", "") or ""
+            company = getattr(exp, "company", "") or ""
+            location = getattr(exp, "location", "") or ""
+            sd = fmt_date(getattr(exp, "start_date", ""))
+            ed_raw = getattr(exp, "end_date", None)
+            ed = fmt_date(ed_raw) if ed_raw else "Present"
+
+            left_line = join_clean([s for s in [title, company] if s], sep=", ")
+            # Meta line (e.g., location) optional under the title row
+            right_line = join_clean([s for s in [location] if s], sep="")
+
+            # First row: title/company (left, bold) and dates (right)
+            add_row_2col(left_line, f"{sd} – {ed}", left_bold=True)
+            # Optional meta row for location (aligned nicely)
+            if right_line:
+                add_row_2col("", right_line)
+
+            # Bullets
+            responsibilities = getattr(exp, "responsibilities", None) or []
+            for item in responsibilities:
+                bp = doc.add_paragraph(str(item), style="TightBullet")
 
     # === Projects ===
-    if state.candidate_details.projects:
-        add_title("Projects")
-        for proj in state.candidate_details.projects:
-            title_line = f"{proj.name} ({proj.date or ''})"
-            p = doc.add_paragraph(title_line)
-            p.runs[0].bold = True
-            set_spacing(p)
-            p = doc.add_paragraph(proj.description)
-            set_spacing(p)
-            if proj.technologies:
-                p = doc.add_paragraph("Technologies: " + ", ".join(proj.technologies))
-                set_spacing(p)
-            if proj.link:
-                p = doc.add_paragraph()
-                add_hyperlink(p, proj.link, proj.link)
-                set_spacing(p)
+    projects = getattr(state.candidate_details, "projects", None)
+    if projects:
+        p = doc.add_paragraph("Projects", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+
+        for proj in projects:
+            name = getattr(proj, "name", "") or ""
+            techs = getattr(proj, "technologies", None) or []
+            descr = getattr(proj, "description", "") or ""
+            date_txt = fmt_date(getattr(proj, "date", "")) if getattr(proj, "date", None) else ""
+            link = getattr(proj, "link", None)
+
+            header_left = join_clean([name, f"({date_txt})" if date_txt else ""], sep=" ")
+            add_row_2col(header_left, "", left_bold=True)
+
+            if descr:
+                doc.add_paragraph(descr, style="Tight")
+            if techs:
+                doc.add_paragraph("Technologies: " + ", ".join(map(str, techs)), style="Tight")
+            if link:
+                lp = doc.add_paragraph(style="Tight")
+                add_hyperlink(lp, str(link), str(link))
 
     # === Education ===
-    if state.candidate_details.education:
-        add_title("Education")
-        for edu in state.candidate_details.education:
-            line = f"{edu.degree}, {edu.institute or ''} ({edu.start_date} - {edu.end_date or 'Present'})"
-            p = doc.add_paragraph(line)
-            set_spacing(p)
+    education = getattr(state.candidate_details, "education", None)
+    if education:
+        p = doc.add_paragraph("Education", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+
+        for edu in education:
+            degree = getattr(edu, "degree", "") or ""
+            institute = getattr(edu, "institute", "") or ""
+            sd = fmt_date(getattr(edu, "start_date", ""))
+            ed_raw = getattr(edu, "end_date", None)
+            ed = fmt_date(ed_raw) if ed_raw else "Present"
+            left = join_clean([degree, institute], sep=", ")
+            add_row_2col(left, f"{sd} – {ed}")
+
+            # Optional details like GPA, coursework, etc., if present
+            extra = []
+            gpa = getattr(edu, "gpa", None)
+            if gpa:
+                extra.append(f"GPA: {gpa}")
+            coursework = getattr(edu, "coursework", None)
+            if coursework:
+                doc.add_paragraph("Relevant coursework: " + ", ".join(coursework), style="Tight")
+            if extra:
+                doc.add_paragraph(" | ".join(extra), style="Tight")
 
     # === Certifications ===
-    if state.candidate_details.certifications:
-        add_title("Certifications")
-        for cert in state.candidate_details.certifications:
-            line = f"{cert.name} - {cert.issuer or ''} ({cert.date or ''})"
-            p = doc.add_paragraph(line)
-            set_spacing(p)
+    certs = getattr(state.candidate_details, "certifications", None)
+    if certs:
+        p = doc.add_paragraph("Certifications", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+        for cert in certs:
+            name = getattr(cert, "name", "") or ""
+            issuer = getattr(cert, "issuer", "") or ""
+            cdate = fmt_date(getattr(cert, "date", "")) if getattr(cert, "date", None) else ""
+            left = join_clean([name, issuer], sep=" — ")
+            add_row_2col(left, cdate)
 
     # === Save ===
-    output_path = state.file_path.replace(".pdf", ".docx")
+    base = getattr(state, "file_path", None) or "resume.docx"
+    root, ext = os.path.splitext(base)
+    output_path = root + ".docx"
     doc.save(output_path)
-    return {"docx_file":output_path}
+    return {"docx_file": output_path}
+
 
 def is_email_in_jd(state:ModelState):
     if state.jd.email and "@" in state.jd.email:
