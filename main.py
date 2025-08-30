@@ -3,7 +3,14 @@ from models import ModelState
 from tools import read_pdf,write_email,write_referral,get_answers,is_email_in_jd,find_missing,ask_questions,create_draft_with_gmail_auth,fill_details,make_resume_docx,get_jd,fill_jd,jd_provided,resume_improvements,convert_docx_to_pdf
 from dotenv import load_dotenv
 from langchain_core.runnables.graph_mermaid import MermaidDrawMethod
+from pathlib import Path
 
+files = list(Path("input").glob("*.pdf"))
+if not files:
+    raise FileNotFoundError("No PDFs found in input/")
+first_pdf = str(min(files, key=lambda p: p.stat().st_mtime))
+
+print(f"Using PDF: {first_pdf}")
 
 #Breakdown for frontend
 getting_input_graph=StateGraph(state_schema=ModelState)
@@ -93,6 +100,6 @@ graph.add_edge("create_draft_with_gmail_auth",END)
 if __name__=="__main__":
     graph = graph.compile()
     graph.get_graph().draw_mermaid_png(output_file_path="graph.jpg")
-    init_state=ModelState(file_path="input/DS_Pushpander_CV.pdf")
+    init_state=ModelState(file_path=first_pdf)
     output=graph.invoke(init_state)
     print(output)

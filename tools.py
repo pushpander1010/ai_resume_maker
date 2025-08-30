@@ -10,6 +10,13 @@ from urllib.parse import urlparse
 from typing import Optional
 import streamlit as st
 from google.oauth2.credentials import Credentials
+from datetime import date, datetime
+from docx import Document
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 import docx
@@ -627,31 +634,20 @@ Respond ONLY with the improved resume content.
 
 def make_resume_docx(state: ModelState) -> ModelState:
     """
-    Generates a clean, ATS-friendly resume:
-    - 0.5" margins, compact spacing, single-column body
-    - Big centered name, contact line, thin rule below header
-    - Consistent SECTION HEADERS
-    - Experience/projects/education rows with right-aligned dates (via borderless 2-col tables)
-    - Tight bullets and safe date formatting
+    Generates a clean, ATS-friendly resume (fixed bullet handling):
+    - Single column, 0.5" margins
+    - Centered name/contact + thin rule
+    - Section headers in small-caps style
+    - Dates right-aligned via borderless 2-col tables
+    - SAFE bullet helper that never relies on doc.styles.get()
     """
-    import os
-    from datetime import date, datetime
-    from docx import Document
-    from docx.shared import Pt, Inches, RGBColor
-    from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-    from docx.enum.style import WD_STYLE_TYPE
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
 
     def fmt_date(d):
-        """Robust 'Mon YYYY' for date/str/None"""
         if not d:
             return ""
         try:
             if isinstance(d, (date, datetime)):
                 return d.strftime("%b %Y")
-            # handle likely strings like '2023-05' or 'May 2023'
-            # try multiple parses but avoid external libs
             for fmt in ("%Y-%m-%d", "%Y-%m", "%d-%m-%Y", "%m/%d/%Y", "%b %Y", "%B %Y", "%Y"):
                 try:
                     return datetime.strptime(str(d), fmt).strftime("%b %Y")
@@ -662,7 +658,7 @@ def make_resume_docx(state: ModelState) -> ModelState:
             return str(d)
 
     def join_clean(items, sep=" • "):
-        return sep.join([s for s in items if s])
+        return sep.join([str(s) for s in items if s])
 
     doc = Document()
 
@@ -675,11 +671,10 @@ def make_resume_docx(state: ModelState) -> ModelState:
 
     normal = doc.styles["Normal"]
     normal.font.name = "Calibri"
-    # ensure asian font too
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
     normal.font.size = Pt(10.5)
 
-    # === Custom styles (idempotent creation) ===
+    # === Styles (idempotent) ===
     def ensure_style(name, base="Normal", size=10.5, bold=False, all_caps=False, color=RGBColor(0, 0, 0)):
         try:
             st = doc.styles[name]
@@ -701,18 +696,6 @@ def make_resume_docx(state: ModelState) -> ModelState:
     ensure_style("HeaderName", size=20, bold=True, all_caps=True)
     ensure_style("HeaderContact", size=10)
     ensure_style("Tight", size=10.5)
-    # Tight bullets derived from List Bullet
-    try:
-        tight_bullet = doc.styles["TightBullet"]
-    except KeyError:
-        tight_bullet = doc.styles.add_style("TightBullet", WD_STYLE_TYPE.PARAGRAPH)
-        tight_bullet.base_style = doc.styles.get("List Bullet")
-        pf = tight_bullet.paragraph_format
-        pf.left_indent = Inches(0.2)
-        pf.first_line_indent = Inches(-0.12)
-        pf.space_before = Pt(0)
-        pf.space_after = Pt(2)
-        pf.line_spacing = 1.05
 
     def set_spacing(p, before=0, after=2, line=1.05):
         pf = p.paragraph_format
@@ -720,7 +703,28 @@ def make_resume_docx(state: ModelState) -> ModelState:
         pf.space_after = Pt(after)
         pf.line_spacing = line
 
-    # Hyperlink helper (blue + underline, ATS-safe)
+    # Bullet helper that never fails
+    def add_bullet(text: str):
+        # Try to use the built-in numbered/bulleted style if present
+        try:
+            _ = doc.styles["List Bullet"]  # will raise KeyError if missing
+            p = doc.add_paragraph(text, style="List Bullet")
+            # tighten spacing & indent
+            pf = p.paragraph_format
+            pf.left_indent = Inches(0.2)
+            pf.first_line_indent = Inches(-0.12)
+            set_spacing(p, before=0, after=2, line=1.05)
+            return p
+        except KeyError:
+            # Fallback: render a visual bullet
+            p = doc.add_paragraph(u"\u2022 " + str(text), style="Tight")
+            pf = p.paragraph_format
+            pf.left_indent = Inches(0.2)
+            pf.first_line_indent = Inches(0)
+            set_spacing(p, before=0, after=2, line=1.05)
+            return p
+
+    # Hyperlink helper
     def add_hyperlink(paragraph, text, url):
         part = paragraph.part
         r_id = part.relate_to(
@@ -734,7 +738,7 @@ def make_resume_docx(state: ModelState) -> ModelState:
         new_run = OxmlElement("w:r")
         rPr = OxmlElement("w:rPr")
         color = OxmlElement("w:color")
-        color.set(qn("w:val"), "1155CC")  # link blue
+        color.set(qn("w:val"), "1155CC")
         u = OxmlElement("w:u")
         u.set(qn("w:val"), "single")
         rPr.append(color)
@@ -747,22 +751,26 @@ def make_resume_docx(state: ModelState) -> ModelState:
         paragraph._p.append(hyperlink)
         return paragraph
 
-    # Borderless table helper for aligned rows (title/left + date/right)
+    # Borderless 2-col row (left text + right text)
     def add_row_2col(left_text, right_text, left_bold=False):
         table = doc.add_table(rows=1, cols=2)
+
         # remove borders
         tbl = table._tbl
         tblPr = tbl.tblPr
-        borders = tblPr.tblBorders if hasattr(tblPr, "tblBorders") else OxmlElement("w:tblBorders")
+        borders = OxmlElement("w:tblBorders")
         for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-            elem = OxmlElement(f"w:{edge}")
-            elem.set(qn("w:val"), "nil")
-            borders.append(elem)
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
         tblPr.append(borders)
 
-        # widths
-        table.columns[0].width = Inches(5.8)
-        table.columns[1].width = Inches(1.6)
+        # column widths
+        try:
+            table.columns[0].width = Inches(5.8)
+            table.columns[1].width = Inches(1.6)
+        except Exception:
+            pass  # width setting can be flaky; safe to ignore
 
         left, right = table.rows[0].cells
         p_left = left.paragraphs[0]
@@ -777,7 +785,7 @@ def make_resume_docx(state: ModelState) -> ModelState:
 
         return table
 
-    # Simple horizontal rule (1-row table with bottom border)
+    # Thin rule under header
     def add_rule():
         t = doc.add_table(rows=1, cols=1)
         tbl = t._tbl
@@ -793,18 +801,16 @@ def make_resume_docx(state: ModelState) -> ModelState:
         bottom.set(qn("w:color"), "999999")
         borders.append(bottom)
         tblPr.append(borders)
-        # remove cell text spacing
         t.rows[0].cells[0].paragraphs[0].add_run("")
-        set_spacing(t.rows[0].cells[0].paragraphs[0], after=2)
+        set_spacing(t.rows[0].cells[0].paragraphs[0], after=6)
 
     # === Header ===
-    # Name
     if getattr(state.candidate_details, "name", None):
         name_para = doc.add_paragraph(style="HeaderName")
         name_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
         name_para.add_run(state.candidate_details.name.upper())
         set_spacing(name_para, after=2)
-    # Contact line (centered, bullet separated)
+
     contact_para = doc.add_paragraph(style="HeaderContact")
     contact_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
     contact_bits = []
@@ -812,23 +818,18 @@ def make_resume_docx(state: ModelState) -> ModelState:
     if getattr(state.candidate_details, "email", None):
         contact_bits.append(("mailto:" + state.candidate_details.email, state.candidate_details.email))
     if getattr(state.candidate_details, "phone", None):
-        # 'tel:' works on mobile; ATS won’t mind
         contact_bits.append(("tel:" + state.candidate_details.phone, state.candidate_details.phone))
-    # profiles: expect list of objects with .url (fallback: string)
     profiles = getattr(state.candidate_details, "profiles", []) or []
     for prof in profiles:
         url = getattr(prof, "url", None) if hasattr(prof, "url") else str(prof)
         if url:
             contact_bits.append((url, url))
 
-    # Render contact bits with bullets
     for i, (url, text) in enumerate(contact_bits):
         add_hyperlink(contact_para, text, url)
         if i < len(contact_bits) - 1:
             contact_para.add_run("  •  ")
     set_spacing(contact_para, after=6)
-
-    # Thin rule under header
     add_rule()
 
     # === Summary ===
@@ -836,15 +837,14 @@ def make_resume_docx(state: ModelState) -> ModelState:
     if summary:
         p = doc.add_paragraph("Summary", style="SectionHeader")
         p.paragraph_format.keep_with_next = True
-        p = doc.add_paragraph(summary, style="Tight")
+        doc.add_paragraph(summary, style="Tight")
 
-    # === Skills (compact, multi-line) ===
+    # === Skills ===
     skills = getattr(state.candidate_details, "skills", None)
     if skills:
         p = doc.add_paragraph("Skills", style="SectionHeader")
         p.paragraph_format.keep_with_next = True
-        # show as wrapped text with separators to conserve space
-        p = doc.add_paragraph(join_clean(list(map(str, skills))), style="Tight")
+        doc.add_paragraph(join_clean(list(map(str, skills))), style="Tight")
 
     # === Experience ===
     experience = getattr(state.candidate_details, "experience", None)
@@ -861,19 +861,15 @@ def make_resume_docx(state: ModelState) -> ModelState:
             ed = fmt_date(ed_raw) if ed_raw else "Present"
 
             left_line = join_clean([s for s in [title, company] if s], sep=", ")
-            # Meta line (e.g., location) optional under the title row
             right_line = join_clean([s for s in [location] if s], sep="")
 
-            # First row: title/company (left, bold) and dates (right)
             add_row_2col(left_line, f"{sd} – {ed}", left_bold=True)
-            # Optional meta row for location (aligned nicely)
             if right_line:
                 add_row_2col("", right_line)
 
-            # Bullets
             responsibilities = getattr(exp, "responsibilities", None) or []
             for item in responsibilities:
-                bp = doc.add_paragraph(str(item), style="TightBullet")
+                add_bullet(str(item))
 
     # === Projects ===
     projects = getattr(state.candidate_details, "projects", None)
@@ -914,16 +910,12 @@ def make_resume_docx(state: ModelState) -> ModelState:
             left = join_clean([degree, institute], sep=", ")
             add_row_2col(left, f"{sd} – {ed}")
 
-            # Optional details like GPA, coursework, etc., if present
-            extra = []
             gpa = getattr(edu, "gpa", None)
             if gpa:
-                extra.append(f"GPA: {gpa}")
+                doc.add_paragraph(f"GPA: {gpa}", style="Tight")
             coursework = getattr(edu, "coursework", None)
             if coursework:
-                doc.add_paragraph("Relevant coursework: " + ", ".join(coursework), style="Tight")
-            if extra:
-                doc.add_paragraph(" | ".join(extra), style="Tight")
+                doc.add_paragraph("Relevant coursework: " + ", ".join(map(str, coursework)), style="Tight")
 
     # === Certifications ===
     certs = getattr(state.candidate_details, "certifications", None)
@@ -939,7 +931,7 @@ def make_resume_docx(state: ModelState) -> ModelState:
 
     # === Save ===
     base = getattr(state, "file_path", None) or "resume.docx"
-    root, ext = os.path.splitext(base)
+    root, _ = os.path.splitext(base)
     output_path = root + ".docx"
     doc.save(output_path)
     return {"docx_file": output_path}
