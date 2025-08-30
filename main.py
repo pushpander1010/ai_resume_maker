@@ -6,11 +6,9 @@ from langchain_core.runnables.graph_mermaid import MermaidDrawMethod
 from pathlib import Path
 
 files = list(Path("input").glob("*.pdf"))
-if not files:
-    raise FileNotFoundError("No PDFs found in input/")
+first_pdf=""
 first_pdf = str(min(files, key=lambda p: p.stat().st_mtime))
 
-print(f"Using PDF: {first_pdf}")
 
 #Breakdown for frontend
 getting_input_graph=StateGraph(state_schema=ModelState)
