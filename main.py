@@ -6,8 +6,10 @@ from langchain_core.runnables.graph_mermaid import MermaidDrawMethod
 from pathlib import Path
 
 files = list(Path("input").glob("*.pdf"))
-first_pdf=""
-first_pdf = str(min(files, key=lambda p: p.stat().st_mtime))
+if files:
+    first_pdf = str(min(files, key=lambda p: p.stat().st_mtime))
+else:
+    first_pdf = None
 
 
 #Breakdown for frontend
