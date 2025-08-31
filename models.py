@@ -89,4 +89,5 @@ class ModelState(BaseModel):
     gmail_auth_creds:Optional[Any]=Field(default=None,description="gmail service object")
     gmail_message:Optional[GmailMessage]=Field(default=None,description="email to be sent to hr")
     referral_message:Optional[str]=Field(default=None,description="referral message to be sent to hr")
-    questions:Optional[QuestionList]=Field(default=None,description="list of questions and answers to be asked regarding the missing data in resume.")
+    # Allow any QuestionList-like object to avoid hot-reload class identity issues
+    questions:Optional[Any]=Field(default=None,description="list of questions and answers to be asked regarding the missing data in resume.")
