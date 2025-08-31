@@ -43,32 +43,40 @@ def _graphs():
 
 
 def _format_preview_preset(fmt: str) -> dict:
+    # Exact mapping of DOCX presets (fonts/accent/banner/sidebar)
     presets = {
-        "fmt1": {"font": "Calibri, Arial, sans-serif", "accent": "#2D2D2D", "banner": False, "sidebar": False},
-        "fmt2": {"font": "'Times New Roman', Times, serif", "accent": "#000000", "banner": False, "sidebar": False},
-        "fmt3": {"font": "Arial, Helvetica, sans-serif", "accent": "#2F54EB", "banner": False, "sidebar": False},
-        "fmt4": {"font": "Verdana, Geneva, sans-serif", "accent": "#00875A", "banner": False, "sidebar": False},
-        "fmt5": {"font": "Georgia, 'Times New Roman', serif", "accent": "#800000", "banner": True, "sidebar": False},
-        "fmt6": {"font": "Garamond, serif", "accent": "#2F54EB", "banner": False, "sidebar": False},
-        "fmt7": {"font": "Cambria, Georgia, serif", "accent": "#008080", "banner": False, "sidebar": False},
-        "fmt8": {"font": "Tahoma, Geneva, sans-serif", "accent": "#E06C00", "banner": False, "sidebar": False},
-        "fmt9": {"font": "'Trebuchet MS', Tahoma, sans-serif", "accent": "#663399", "banner": False, "sidebar": False},
-        "fmt10": {"font": "'Century Gothic', Arial, sans-serif", "accent": "#607D8B", "banner": False, "sidebar": False},
-        "fmt11": {"font": "'Palatino Linotype', Palatino, serif", "accent": "#003366", "banner": False, "sidebar": False},
-        "fmt12": {"font": "Calibri, Arial, sans-serif", "accent": "#00BCD4", "banner": True, "sidebar": True},
+        "fmt1":  {"font": "Calibri, Arial, sans-serif",                  "accent": "#2D2D2D", "banner": False, "sidebar": False},  # (45,45,45)
+        "fmt2":  {"font": "'Times New Roman', Times, serif",             "accent": "#000000", "banner": False, "sidebar": False},  # (0,0,0)
+        "fmt3":  {"font": "Arial, Helvetica, sans-serif",                 "accent": "#2F54EB", "banner": False, "sidebar": False},  # (47,84,235)
+        "fmt4":  {"font": "Verdana, Geneva, sans-serif",                  "accent": "#00875A", "banner": False, "sidebar": False},  # (0,135,90)
+        "fmt5":  {"font": "Georgia, 'Times New Roman', serif",            "accent": "#800000", "banner": True,  "sidebar": False},  # (128,0,0)
+        "fmt6":  {"font": "Garamond, serif",                              "accent": "#2F54EB", "banner": False, "sidebar": False},  # (47,84,235)
+        "fmt7":  {"font": "Cambria, Georgia, serif",                      "accent": "#008080", "banner": False, "sidebar": False},  # (0,128,128)
+        "fmt8":  {"font": "Tahoma, Geneva, sans-serif",                   "accent": "#E06C00", "banner": False, "sidebar": False},  # (224,108,0)
+        "fmt9":  {"font": "'Trebuchet MS', Tahoma, sans-serif",           "accent": "#663399", "banner": False, "sidebar": False},  # (102,51,153)
+        "fmt10": {"font": "'Century Gothic', Arial, sans-serif",          "accent": "#607D8B", "banner": False, "sidebar": False},  # (96,125,139)
+        "fmt11": {"font": "'Palatino Linotype', Palatino, serif",         "accent": "#003366", "banner": False, "sidebar": False},  # (0,51,102)
+        "fmt12": {"font": "Calibri, Arial, sans-serif",                   "accent": "#00BCD4", "banner": True,  "sidebar": True },  # (0,188,212) + sidebar
+        "fmt13": {"font": "Arial, Helvetica, sans-serif",                 "accent": "#3F51B5", "banner": False, "sidebar": False},  # (63,81,181)
+        "fmt14": {"font": "Georgia, 'Times New Roman', serif",            "accent": "#E91E63", "banner": False, "sidebar": False},  # (233,30,99)
+        "fmt15": {"font": "Verdana, Geneva, sans-serif",                  "accent": "#2E7D32", "banner": True,  "sidebar": False},  # (46,125,50)
+        "fmt16": {"font": "'Times New Roman', Times, serif",              "accent": "#2196F3", "banner": False, "sidebar": False},  # (33,150,243)
+        "fmt17": {"font": "Cambria, Georgia, serif",                      "accent": "#00695C", "banner": False, "sidebar": False},  # (0,105,92)
+        "fmt18": {"font": "Garamond, serif",                              "accent": "#795548", "banner": True,  "sidebar": False},  # (121,85,72)
+        "fmt19": {"font": "Tahoma, Geneva, sans-serif",                   "accent": "#009688", "banner": False, "sidebar": False},  # (0,150,136)
+        "fmt20": {"font": "'Trebuchet MS', Tahoma, sans-serif",           "accent": "#FF5722", "banner": False, "sidebar": False},  # (255,87,34)
+        "fmt21": {"font": "'Century Gothic', Arial, sans-serif",          "accent": "#9C27B0", "banner": True,  "sidebar": False},  # (156,39,176)
+        "fmt22": {"font": "'Palatino Linotype', Palatino, serif",         "accent": "#CDDC39", "banner": False, "sidebar": False},  # (205,220,57)
+        "fmt23": {"font": "Arial, Helvetica, sans-serif",                 "accent": "#000000", "banner": False, "sidebar": False},  # (0,0,0)
+        "fmt24": {"font": "Georgia, 'Times New Roman', serif",            "accent": "#3F51B5", "banner": True,  "sidebar": False},  # (63,81,181)
+        "fmt25": {"font": "Verdana, Geneva, sans-serif",                  "accent": "#212121", "banner": False, "sidebar": False},  # (33,33,33)
+        "fmt26": {"font": "'Times New Roman', Times, serif",              "accent": "#4CAF50", "banner": False, "sidebar": False},  # (76,175,80)
+        "fmt27": {"font": "Cambria, Georgia, serif",                      "accent": "#F44336", "banner": False, "sidebar": False},  # (244,67,54)
+        "fmt28": {"font": "Arial, Helvetica, sans-serif",                 "accent": "#F44336", "banner": True,  "sidebar": True },  # override
+        "fmt29": {"font": "Tahoma, Geneva, sans-serif",                   "accent": "#9E9E9E", "banner": False, "sidebar": False},  # (158,158,158)
+        "fmt30": {"font": "'Trebuchet MS', Tahoma, sans-serif",           "accent": "#795548", "banner": True,  "sidebar": False},  # (121,85,72)
     }
-    # Special overrides to match actual DOCX styling
-    special = {
-        "fmt28": {"font": "Arial, Helvetica, sans-serif", "accent": "#F44336", "banner": True, "sidebar": True},
-    }
-    if fmt in special:
-        return special[fmt]
-    if fmt not in presets:
-        # Cycle a palette for fmt13..fmt30
-        palette = ["#3F51B5", "#009688", "#FF5722", "#9C27B0", "#607D8B", "#4CAF50", "#F44336"]
-        idx = (int(fmt[3:]) - 1) % len(palette)
-        return {"font": "Arial, Helvetica, sans-serif", "accent": palette[idx], "banner": (idx % 2 == 0), "sidebar": (idx % 3 == 0)}
-    return presets[fmt]
+    return presets.get(fmt, presets["fmt1"]) 
 
 
 def render_format_preview(fmt: str):
