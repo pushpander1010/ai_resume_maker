@@ -57,6 +57,12 @@ def _format_preview_preset(fmt: str) -> dict:
         "fmt11": {"font": "'Palatino Linotype', Palatino, serif", "accent": "#003366", "banner": False, "sidebar": False},
         "fmt12": {"font": "Calibri, Arial, sans-serif", "accent": "#00BCD4", "banner": True, "sidebar": True},
     }
+    # Special overrides to match actual DOCX styling
+    special = {
+        "fmt28": {"font": "Arial, Helvetica, sans-serif", "accent": "#F44336", "banner": True, "sidebar": True},
+    }
+    if fmt in special:
+        return special[fmt]
     if fmt not in presets:
         # Cycle a palette for fmt13..fmt30
         palette = ["#3F51B5", "#009688", "#FF5722", "#9C27B0", "#607D8B", "#4CAF50", "#F44336"]

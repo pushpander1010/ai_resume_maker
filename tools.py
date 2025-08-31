@@ -927,6 +927,9 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
             p["sidebar"] = True
         except Exception:
             pass
+    if style == "fmt12":
+        # Ensure sidebar like preview
+        p["sidebar"] = True
 
     # Build a document similarly to make_resume_docx but with preset tweaks
     from docx import Document  # local import to avoid confusion
