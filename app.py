@@ -459,14 +459,22 @@ if st.session_state.phase == "final":
                 file_name="Updated_Resume.pdf",
             )
 
-    if state.gmail_message and state.gmail_message.body:
+    # Show Email only if JD.email exists; else show Referral
+    jd_email = None
+    try:
+        if state.jd:
+            jd_email = state.jd.get("email") if isinstance(state.jd, dict) else getattr(state.jd, "email", None)
+    except Exception:
+        jd_email = None
+
+    if jd_email and state.gmail_message and getattr(state.gmail_message, "body", None):
         with st.expander("Generated Email"):
             st.markdown(f"**To:** {state.gmail_message.to}")
             st.markdown(f"**Subject:** {state.gmail_message.subject}")
             st.text_area("Email Body", state.gmail_message.body, height=200)
     elif getattr(state, "referral_message", None):
-        with st.expander("Referral Message"):
-            st.text_area("Referral Text", state.referral_message, height=150)
+        with st.expander("Referral Message", expanded=True):
+            st.text_area("Referral Text (copy/paste to LinkedIn/email)", state.referral_message, height=200)
 
     if st.button("Create Another"):
         # Preserve auth/session identity keys; reset only flow-related state

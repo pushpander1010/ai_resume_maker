@@ -1434,13 +1434,7 @@ Write in a polite, concise tone. Don't assume familiarity.
 
     chain = prompt | get_model_instance(model_key=state.model) | StrOutputParser()
     output = chain.invoke({"jd": state.jd, "resume": state.thought})
-    gm = GmailMessage.model_construct(
-        to=(state.jd.email if state.jd and getattr(state.jd, "email", None) else None),
-        subject="Referral Request",
-        body=output,
-    )
-    print("[route] writing referral (JD had no recipient email)")
-    return {"referral_message": output, "gmail_message": gm}
+    return {"referral_message": output}
 
 
 FONTS = {
