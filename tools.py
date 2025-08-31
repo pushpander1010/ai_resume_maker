@@ -1440,6 +1440,23 @@ LAYOUTS = {
     "banner": {"banner": True, "sidebar": False, "margins": 0.75, "header_caps": True},
     # sidebar: two-column layout
     "sidebar": {"banner": True, "sidebar": True, "margins": 0.75, "header_caps": True},
+    # sidebar-compact: two-column with tighter margins and narrower left
+    "sidebar-compact": {"banner": False, "sidebar": True, "margins": 0.5, "header_caps": True, "sidebar_widths": (2.0, 5.4)},
+    # sidebar-banner: two-column plus banner header
+    "sidebar-banner": {"banner": True, "sidebar": True, "margins": 0.75, "header_caps": True, "sidebar_widths": (2.2, 5.2)},
+    # sidebar-pro: refined two-column, small left text, rules between sections, icons
+    "sidebar-pro": {
+        "banner": True,
+        "sidebar": True,
+        "margins": 0.7,
+        "header_caps": True,
+        "sidebar_widths": (2.3, 5.1),
+        "left_small": True,
+        "rules": True,
+        "icons": True,
+    },
+    # sidebar-grid: two-column with grid skills in left
+    "sidebar-grid": {"banner": True, "sidebar": True, "margins": 0.75, "header_caps": True, "sidebar_widths": (2.2, 5.2), "skills_grid": True},
     # compact: tighter margins, single column
     "compact": {"banner": False, "sidebar": False, "margins": 0.5, "header_caps": True},
     # modern: single column with tighter margins
@@ -1470,6 +1487,11 @@ def _build_preset_from_state(state: ModelState) -> dict:
         "header_banner": layout.get("banner", False),
         "sidebar": layout.get("sidebar", False),
         "sidebar_widths": layout.get("sidebar_widths"),
+        "left_small": layout.get("left_small", False),
+        "skills_grid": layout.get("skills_grid", False),
+        "timeline": layout.get("timeline", False),
+        "rules": layout.get("rules", False),
+        "icons": layout.get("icons", False),
         "bullet": "• ",
     }
     return p
@@ -1547,6 +1569,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
     ensure_style("HeaderName", size=p.get("size", 10.5) + 9, bold=True, all_caps=p.get("header_caps", True))
     ensure_style("HeaderContact", size=p.get("size", 10.5))
     ensure_style("Tight", size=p.get("size", 10.5))
+    ensure_style("Small", size=max(8.5, p.get("size", 10.5) - 1))
 
     def set_spacing(pgh, before=0, after=2, line=1.05):
         pf = pgh.paragraph_format
@@ -1578,6 +1601,32 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
         hyperlink.append(new_run)
         paragraph._p.append(hyperlink)
         return paragraph
+
+    def short_url(u: str) -> str:
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(str(u))
+            host = parsed.netloc or parsed.path
+            return host.replace("www.", "")
+        except Exception:
+            return str(u)
+
+    def add_rule_in_cell(cell):
+        t = cell.add_table(rows=1, cols=1)
+        tbl = t._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "6")
+        bottom.set(qn("w:color"), "{:02X}{:02X}{:02X}".format(*accent_rgb))
+        borders.append(bottom)
+        tblPr.append(borders)
+        t.rows[0].cells[0].paragraphs[0].add_run("")
 
     # Header + optional banner
     def add_rule():
@@ -1655,7 +1704,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
                 contact_bits.append((url, url))
         for (url, text) in contact_bits:
             pgh = left_cell.add_paragraph(style="Tight")
-            add_hyperlink(pgh, text, url)
+            add_hyperlink(pgh, short_url(text), url)
 
         skills = getattr(state.candidate_details, "skills", None)
         if skills:
@@ -1664,12 +1713,23 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
             for s in skills:
                 left_cell.add_paragraph(p.get("bullet", "• ") + str(s), style="Tight")
 
+        profiles = getattr(state.candidate_details, "profiles", None) or []
+        if profiles:
+            p_links = left_cell.add_paragraph("Links", style="SectionHeader")
+            set_spacing(p_links, after=2)
+            for prof in profiles:
+                url = getattr(prof, "url", None) if hasattr(prof, "url") else str(prof)
+                if url:
+                    pgh = left_cell.add_paragraph(style="Tight")
+                    add_hyperlink(pgh, short_url(url), url)
+
         # Right content
         summary = getattr(state.candidate_details, "summary", None)
         if summary:
             p_rh = right_cell.add_paragraph("Summary", style="SectionHeader")
             p_rh.paragraph_format.keep_with_next = True
             right_cell.add_paragraph(summary, style="Tight")
+            add_rule_in_cell(right_cell)
 
         experience = getattr(state.candidate_details, "experience", None)
         if experience:
@@ -1689,6 +1749,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
                     right_cell.add_paragraph(location, style="Tight")
                 for item in getattr(exp, "responsibilities", None) or []:
                     right_cell.add_paragraph(p.get("bullet", "• ") + str(item), style="Tight")
+            add_rule_in_cell(right_cell)
 
         projects = getattr(state.candidate_details, "projects", None)
         if projects:
@@ -1703,6 +1764,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
                 rp.runs and setattr(rp.runs[0], 'bold', True)
                 if descr:
                     right_cell.add_paragraph(descr, style="Tight")
+            add_rule_in_cell(right_cell)
 
         education = getattr(state.candidate_details, "education", None)
         if education:
@@ -1726,6 +1788,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
                 issuer = getattr(cert, "issuer", "") or ""
                 cdate = fmt_date(getattr(cert, "date", "")) if getattr(cert, "date", None) else ""
                 right_cell.add_paragraph((" – ".join([s for s in [name, issuer] if s])) + (f"  {cdate}" if cdate else ""), style="Tight")
+            add_rule_in_cell(right_cell)
 
         base = getattr(state, "file_path", None) or "resume.docx"
         root, _ = os.path.splitext(base)

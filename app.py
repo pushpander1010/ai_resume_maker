@@ -309,11 +309,11 @@ if st.session_state.phase == "jd":
     }
     c1, c2, c3 = st.columns(3)
     with c1:
-        layout_key = st.selectbox("Layout", options=list(layouts.keys()), format_func=lambda k: layouts[k], index=0)
+        layout_key = st.selectbox("Layout", options=list(layouts.keys()), format_func=lambda k: layouts[k], index=list(layouts.keys()).index(st.session_state.get("resume_layout", "classic")) if st.session_state.get("resume_layout") in layouts else 0)
     with c2:
-        font_key = st.selectbox("Font", options=list(fonts.keys()), format_func=lambda k: fonts[k], index=0)
+        font_key = st.selectbox("Font", options=list(fonts.keys()), format_func=lambda k: fonts[k], index=list(fonts.keys()).index(st.session_state.get("resume_font", "calibri")) if st.session_state.get("resume_font") in fonts else 0)
     with c3:
-        color_key = st.selectbox("Accent Color", options=list(colors.keys()), format_func=lambda k: colors[k], index=0)
+        color_key = st.selectbox("Accent Color", options=list(colors.keys()), format_func=lambda k: colors[k], index=list(colors.keys()).index(st.session_state.get("resume_color", "blue")) if st.session_state.get("resume_color") in colors else 0)
     st.markdown("### Provide Job Description")
     # Preview the chosen format
     with st.expander("Preview Selected Format", expanded=True):
