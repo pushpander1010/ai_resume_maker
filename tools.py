@@ -841,7 +841,7 @@ def make_resume_docx(state: ModelState) -> ModelState:
 
     base = getattr(state, "file_path", None) or "resume.docx"
     root, _ = os.path.splitext(base)
-    output_path = root + ".docx"
+    output_path = root + "_.docx"
     doc.save(output_path)
     return {"docx_file": output_path}
 
@@ -1241,7 +1241,7 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
 
         base = getattr(state, "file_path", None) or "resume.docx"
         root, _ = os.path.splitext(base)
-        output_path = f"{root}_{style}.docx"
+        output_path = f"{root}_.docx"
         doc.save(output_path)
         return {"docx_file": output_path}
 
@@ -1354,7 +1354,7 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
 
     base = getattr(state, "file_path", None) or "resume.docx"
     root, _ = os.path.splitext(base)
-    output_path = f"{root}_{style}.docx"
+    output_path = f"{root}_.docx"
     doc.save(output_path)
     return {"docx_file": output_path}
 
@@ -1785,7 +1785,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
 
         base = getattr(state, "file_path", None) or "resume.docx"
         root, _ = os.path.splitext(base)
-        output_path = f"{root}_{state.resume_layout or 'layout'}_{state.resume_font or 'font'}_{state.resume_color or 'color'}.docx"
+        output_path = f"{root}_.docx"
         doc.save(output_path)
         return {"docx_file": output_path}
 
@@ -1953,7 +1953,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
 
         base = getattr(state, "file_path", None) or "resume.docx"
         root, _ = os.path.splitext(base)
-        output_path = f"{root}_{state.resume_layout or 'layout'}_{state.resume_font or 'font'}_{state.resume_color or 'color'}.docx"
+        output_path = f"{root}_.docx"
         doc.save(output_path)
         return {"docx_file": output_path}
 
@@ -2050,6 +2050,6 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
 
     base = getattr(state, "file_path", None) or "resume.docx"
     root, _ = os.path.splitext(base)
-    output_path = f"{root}_{state.resume_layout or 'layout'}_{state.resume_font or 'font'}_{state.resume_color or 'color'}.docx"
+    output_path = f"{root}_.docx"
     doc.save(output_path)
     return {"docx_file": output_path}
