@@ -314,6 +314,18 @@ def write_email(state: ModelState) -> ModelState:
     )
     chain = prompt | get_model_instance(model_key=state.model) | parser
     output = chain.invoke({"candidate_details": state.candidate_details, "jd": state.jd})
+    # Force the recipient to JD.email to avoid LLM hallucinations
+    jd_email = None
+    if state.jd:
+        if isinstance(state.jd, dict):
+            jd_email = state.jd.get("email")
+        else:
+            jd_email = getattr(state.jd, "email", None)
+    try:
+        if jd_email:
+            setattr(output, "to", jd_email)
+    except Exception:
+        pass
     try:
         print(f"[write_email] to={getattr(output, 'to', None)} subject={getattr(output, 'subject', None)}")
     except Exception:
