@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 from pydantic import TypeAdapter, BaseModel
 
 from models import ModelState
@@ -39,6 +40,115 @@ MODEL_OPTIONS = [
 @st.cache_resource(show_spinner=False)
 def _graphs():
     return build_getting_input_graph(), build_process_request_graph()
+
+
+def _format_preview_preset(fmt: str) -> dict:
+    presets = {
+        "fmt1": {"font": "Calibri, Arial, sans-serif", "accent": "#2D2D2D", "banner": False, "sidebar": False},
+        "fmt2": {"font": "'Times New Roman', Times, serif", "accent": "#000000", "banner": False, "sidebar": False},
+        "fmt3": {"font": "Arial, Helvetica, sans-serif", "accent": "#2F54EB", "banner": False, "sidebar": False},
+        "fmt4": {"font": "Verdana, Geneva, sans-serif", "accent": "#00875A", "banner": False, "sidebar": False},
+        "fmt5": {"font": "Georgia, 'Times New Roman', serif", "accent": "#800000", "banner": True, "sidebar": False},
+        "fmt6": {"font": "Garamond, serif", "accent": "#2F54EB", "banner": False, "sidebar": False},
+        "fmt7": {"font": "Cambria, Georgia, serif", "accent": "#008080", "banner": False, "sidebar": False},
+        "fmt8": {"font": "Tahoma, Geneva, sans-serif", "accent": "#E06C00", "banner": False, "sidebar": False},
+        "fmt9": {"font": "'Trebuchet MS', Tahoma, sans-serif", "accent": "#663399", "banner": False, "sidebar": False},
+        "fmt10": {"font": "'Century Gothic', Arial, sans-serif", "accent": "#607D8B", "banner": False, "sidebar": False},
+        "fmt11": {"font": "'Palatino Linotype', Palatino, serif", "accent": "#003366", "banner": False, "sidebar": False},
+        "fmt12": {"font": "Calibri, Arial, sans-serif", "accent": "#00BCD4", "banner": True, "sidebar": True},
+    }
+    if fmt not in presets:
+        # Cycle a palette for fmt13..fmt30
+        palette = ["#3F51B5", "#009688", "#FF5722", "#9C27B0", "#607D8B", "#4CAF50", "#F44336"]
+        idx = (int(fmt[3:]) - 1) % len(palette)
+        return {"font": "Arial, Helvetica, sans-serif", "accent": palette[idx], "banner": (idx % 2 == 0), "sidebar": (idx % 3 == 0)}
+    return presets[fmt]
+
+
+def render_format_preview(fmt: str):
+    p = _format_preview_preset(fmt)
+    font = p["font"]
+    accent = p["accent"]
+    banner = p["banner"]
+    sidebar = p["sidebar"]
+
+    # Minimal HTML/CSS + tiny JS hover to illustrate style
+    if sidebar:
+        html = f"""
+        <style>
+          .cv {{ font-family:{font}; color:#222; }}
+          .cv .wrap {{ display:grid; grid-template-columns: 240px 1fr; gap:18px; }}
+          .cv .sidebar {{ background:#f7f9fb; border-left:6px solid {accent}; padding:14px; border-radius:6px; }}
+          .cv .name {{ font-weight:800; font-size:26px; margin:0 0 6px; }}
+          .cv .banner {{ display:{'block' if banner else 'none'}; background:{accent}; color:#fff; padding:10px 14px; border-radius:6px; font-weight:800; margin-bottom:10px; }}
+          .cv h3 {{ font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:{accent}; margin:14px 0 6px; }}
+          .cv .chip {{ display:inline-block; padding:4px 8px; background:#eef3ff; border:1px solid {accent}; color:{accent}; border-radius:999px; margin:2px 4px 0 0; font-size:11px; }}
+          .cv .sec h2 {{ color:{accent}; font-size:14px; margin:10px 0 6px; text-transform:uppercase; letter-spacing:.06em; }}
+          .cv li {{ margin:4px 0; }}
+        </style>
+        <div class="cv">
+          <div class="banner">JANE DOE</div>
+          <div class="wrap">
+            <aside class="sidebar">
+              <div class="name">Jane Doe</div>
+              <div>jane@example.com</div>
+              <div>+1 555 0100</div>
+              <h3>Skills</h3>
+              <div>
+                <span class="chip">SQL</span>
+                <span class="chip">Python</span>
+                <span class="chip">Tableau</span>
+              </div>
+              <h3>Links</h3>
+              <div><a href="#">github.com/jane</a></div>
+              <div><a href="#">linkedin.com/in/jane</a></div>
+            </aside>
+            <main>
+              <section class="sec">
+                <h2>Summary</h2>
+                <p>Data analyst with 4+ years driving insights and automation.</p>
+              </section>
+              <section class="sec">
+                <h2>Experience</h2>
+                <ul>
+                  <li>Improved ETL pipelines, reducing latency by 35%.</li>
+                  <li>Built KPI dashboards adopted by 6 teams.</li>
+                </ul>
+              </section>
+            </main>
+          </div>
+        </div>
+        <script>document.querySelectorAll('.chip').forEach(c=>c.addEventListener('mouseenter',()=>c.style.background='{accent}33'));</script>
+        """
+    else:
+        html = f"""
+        <style>
+          .cv {{ font-family:{font}; color:#222; border:1px solid #e6e6e6; border-radius:8px; padding:14px; }}
+          .cv .name {{ text-align:center; font-weight:800; font-size:26px; margin:0; {('background:'+accent+';color:#fff;padding:10px;border-radius:6px;') if banner else ''} }}
+          .cv .contact {{ text-align:center; margin:8px 0 12px; color:#444; }}
+          .cv hr {{ border:none; border-top:2px solid {accent}; margin:8px 0 12px; }}
+          .cv h2 {{ color:{accent}; font-size:14px; margin:10px 0 6px; text-transform:uppercase; letter-spacing:.06em; }}
+          .cv li {{ margin:4px 0; }}
+        </style>
+        <div class="cv">
+          <div class="name">JANE DOE</div>
+          <div class="contact">jane@example.com • +1 555 0100 • linkedin.com/in/jane</div>
+          <hr />
+          <section>
+            <h2>Summary</h2>
+            <p>Data analyst with 4+ years driving insights and automation.</p>
+          </section>
+          <section>
+            <h2>Experience</h2>
+            <ul>
+              <li>Improved ETL pipelines, reducing latency by 35%.</li>
+              <li>Built KPI dashboards adopted by 6 teams.</li>
+            </ul>
+          </section>
+        </div>
+        <script>document.querySelectorAll('h2').forEach(h=>h.addEventListener('click',()=>h.style.opacity='0.7'));</script>
+        """
+    components.html(html, height=320, scrolling=False)
 
 
 def _coerce_state(raw_state):
@@ -111,6 +221,10 @@ if st.session_state.phase == "jd":
         return base_labels.get(k, f"Format {k[3:]} – Variant")
     fmt_key = st.selectbox("Choose Resume Format", options=options, format_func=_fmt_label, index=0)
     st.markdown("### Provide Job Description")
+    # Preview the chosen format
+    with st.expander("Preview Selected Format", expanded=True):
+        render_format_preview(fmt_key)
+
     jd_text = st.text_area(
         "Paste the job description (include recruiter email if available)", height=300
     )
