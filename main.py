@@ -68,8 +68,7 @@ def build_process_request_graph():
         is_email_in_jd,
         {"email_present": "write_email", "email_absent": "write_referral"},
     )
-    g.add_edge(START, "get_answers")
-    g.add_edge("get_answers", "resume_improvements")
+    g.add_edge(START, "resume_improvements")
     g.add_edge("resume_improvements", "fill_details")
     # Route to a single builder that respects state.resume_format
     g.add_edge("fill_details", "make_resume_docx_styled")
