@@ -1,105 +1,161 @@
 from langgraph.graph import StateGraph, START, END
-from models import ModelState
-from tools import read_pdf,write_email,write_referral,get_answers,is_email_in_jd,find_missing,ask_questions,create_draft_with_gmail_auth,fill_details,make_resume_docx,get_jd,fill_jd,jd_provided,resume_improvements,convert_docx_to_pdf
-from dotenv import load_dotenv
-from langchain_core.runnables.graph_mermaid import MermaidDrawMethod
 from pathlib import Path
+import os
 
-files = list(Path("input").glob("*.pdf"))
-if files:
-    first_pdf = str(min(files, key=lambda p: p.stat().st_mtime))
-else:
-    first_pdf = None
+from models import ModelState
+from tools import (
+    read_pdf,
+    write_email,
+    write_referral,
+    get_answers,
+    is_email_in_jd,
+    find_missing,
+    ask_questions,
+    create_draft_with_gmail_auth,
+    fill_details,
+    make_resume_docx,
+    make_resume_docx_1,
+    make_resume_docx_2,
+    make_resume_docx_3,
+    make_resume_docx_4,
+    make_resume_docx_5,
+    get_jd,
+    fill_jd,
+    jd_provided,
+    resume_improvements,
+    convert_docx_to_pdf,
+    select_resume_format,
+)
 
 
 #Breakdown for frontend
-getting_input_graph=StateGraph(state_schema=ModelState)
-getting_input_graph.add_node("read_pdf", read_pdf)
-getting_input_graph.add_node("fill_jd", fill_jd)
-getting_input_graph.add_node("get_jd",get_jd)
-getting_input_graph.add_node("find_missing", find_missing)
-getting_input_graph.add_node("ask_questions", ask_questions)
-getting_input_graph.add_edge(START,"read_pdf")
-getting_input_graph.add_edge(START,"get_jd")
-getting_input_graph.add_edge("get_jd", "fill_jd")
-getting_input_graph.add_edge("read_pdf", "find_missing")
-getting_input_graph.add_edge("find_missing", "ask_questions")
-getting_input_graph.add_edge("ask_questions",END)
-getting_input_graph=getting_input_graph.compile()
-getting_input_graph.get_graph().draw_mermaid_png(output_file_path="getting_input_graph.jpg")
+def build_getting_input_graph():
+    g = StateGraph(state_schema=ModelState)
+    g.add_node("read_pdf", read_pdf)
+    g.add_node("fill_jd", fill_jd)
+    g.add_node("get_jd", get_jd)
+    g.add_node("find_missing", find_missing)
+    g.add_node("ask_questions", ask_questions)
+    g.add_edge(START, "read_pdf")
+    g.add_edge(START, "get_jd")
+    g.add_edge("get_jd", "fill_jd")
+    g.add_edge("read_pdf", "find_missing")
+    g.add_edge("find_missing", "ask_questions")
+    g.add_edge("ask_questions", END)
+    return g.compile()
 
 
-process_request=StateGraph(state_schema=ModelState)
-process_request.add_node("get_answers", get_answers)
-process_request.add_node("make_resume_docx", make_resume_docx)
-process_request.add_node("resume_improvements", resume_improvements,defer=True,)
-process_request.add_node("create_draft_with_gmail_auth", create_draft_with_gmail_auth)
-process_request.add_node("convert_docx_to_pdf",convert_docx_to_pdf)
-process_request.add_node("write_email",write_email)
-process_request.add_node("write_referral",write_referral)
-process_request.add_node("fill_details", fill_details)
+def build_process_request_graph():
+    g = StateGraph(state_schema=ModelState)
+    g.add_node("get_answers", get_answers)
+    g.add_node("make_resume_docx", make_resume_docx)
+    g.add_node("make_resume_docx_1", make_resume_docx_1)
+    g.add_node("make_resume_docx_2", make_resume_docx_2)
+    g.add_node("make_resume_docx_3", make_resume_docx_3)
+    g.add_node("make_resume_docx_4", make_resume_docx_4)
+    g.add_node("make_resume_docx_5", make_resume_docx_5)
+    g.add_node("resume_improvements", resume_improvements, defer=True)
+    g.add_node("create_draft_with_gmail_auth", create_draft_with_gmail_auth)
+    g.add_node("convert_docx_to_pdf", convert_docx_to_pdf)
+    g.add_node("write_email", write_email)
+    g.add_node("write_referral", write_referral)
+    g.add_node("fill_details", fill_details)
+
+    g.add_conditional_edges(
+        "convert_docx_to_pdf",
+        is_email_in_jd,
+        {"email_present": "write_email", "email_absent": "write_referral"},
+    )
+    g.add_edge(START, "resume_improvements")
+    g.add_edge("resume_improvements", "fill_details")
+    # Route to selected resume formatter
+    g.add_conditional_edges(
+        "fill_details",
+        select_resume_format,
+        {
+            "fmt1": "make_resume_docx_1",
+            "fmt2": "make_resume_docx_2",
+            "fmt3": "make_resume_docx_3",
+            "fmt4": "make_resume_docx_4",
+            "fmt5": "make_resume_docx_5",
+        },
+    )
+    g.add_edge("make_resume_docx", "convert_docx_to_pdf")
+    g.add_edge("write_email", "create_draft_with_gmail_auth")
+    g.add_edge("create_draft_with_gmail_auth", END)
+    return g.compile()
 
 
-process_request.add_conditional_edges("convert_docx_to_pdf",is_email_in_jd,{
-    "email_present":"write_email",
-    "email_absent":"write_referral"
-})
-process_request.add_edge(START,"resume_improvements")
-process_request.add_edge("resume_improvements","fill_details")
-process_request.add_edge("fill_details","make_resume_docx")
-process_request.add_edge("make_resume_docx","convert_docx_to_pdf")
-#graph.add_edge("convert_docx_to_pdf","write_email")
-process_request.add_edge("write_email","create_draft_with_gmail_auth")
-process_request.add_edge("create_draft_with_gmail_auth",END)
-
-process_request=process_request.compile()
-process_request.get_graph().draw_mermaid_png(output_file_path="process_request.jpg")
 
 
+def build_main_graph():
+    g = StateGraph(state_schema=ModelState)
+    g.add_node("read_pdf", read_pdf)
+    g.add_node("get_jd", get_jd)
+    g.add_node("fill_details", fill_details)
+    g.add_node("fill_jd", fill_jd)
+    g.add_node("find_missing", find_missing)
+    g.add_node("ask_questions", ask_questions)
+    g.add_node("get_answers", get_answers)
+    g.add_node("make_resume_docx", make_resume_docx)
+    g.add_node("make_resume_docx_1", make_resume_docx_1)
+    g.add_node("make_resume_docx_2", make_resume_docx_2)
+    g.add_node("make_resume_docx_3", make_resume_docx_3)
+    g.add_node("make_resume_docx_4", make_resume_docx_4)
+    g.add_node("make_resume_docx_5", make_resume_docx_5)
+    g.add_node("resume_improvements", resume_improvements, defer=True)
+    g.add_node("create_draft_with_gmail_auth", create_draft_with_gmail_auth)
+    g.add_node("convert_docx_to_pdf", convert_docx_to_pdf)
+    g.add_node("write_email", write_email)
+    g.add_node("write_referral", write_referral)
+
+    g.add_edge(START, "read_pdf")
+    g.add_edge(START, "get_jd")
+    g.add_conditional_edges("get_jd", jd_provided, {True: "fill_jd", False: "get_jd"})
+    g.add_edge("read_pdf", "find_missing")
+    g.add_edge("find_missing", "ask_questions")
+    g.add_edge("ask_questions", "get_answers")
+    g.add_conditional_edges(
+        "convert_docx_to_pdf",
+        is_email_in_jd,
+        {"email_present": "write_email", "email_absent": "write_referral"},
+    )
+    g.add_edge(["fill_jd", "get_answers"], "resume_improvements")
+    g.add_edge("resume_improvements", "fill_details")
+    g.add_conditional_edges(
+        "fill_details",
+        select_resume_format,
+        {
+            "fmt1": "make_resume_docx_1",
+            "fmt2": "make_resume_docx_2",
+            "fmt3": "make_resume_docx_3",
+            "fmt4": "make_resume_docx_4",
+            "fmt5": "make_resume_docx_5",
+        },
+    )
+    g.add_edge("make_resume_docx", "convert_docx_to_pdf")
+    g.add_edge("write_email", "create_draft_with_gmail_auth")
+    g.add_edge("create_draft_with_gmail_auth", END)
+    return g.compile()
 
 
-# --- Create LangGraph ---
-graph = StateGraph(state_schema=ModelState)
+if __name__ == "__main__":
+    # Optional: draw diagrams only when requested
+    if os.environ.get("DRAW_GRAPHS"):
+        build_getting_input_graph().get_graph().draw_mermaid_png(
+            output_file_path="getting_input_graph.jpg"
+        )
+        build_process_request_graph().get_graph().draw_mermaid_png(
+            output_file_path="process_request.jpg"
+        )
 
+    # Determine the most recent PDF in input/ lazily at runtime
+    files = list(Path("input").glob("*.pdf"))
+    first_pdf = str(min(files, key=lambda p: p.stat().st_mtime)) if files else None
 
-
-graph.add_node("read_pdf", read_pdf)
-graph.add_node("get_jd",get_jd)
-graph.add_node("fill_details", fill_details)
-graph.add_node("fill_jd", fill_jd)
-graph.add_node("find_missing", find_missing)
-graph.add_node("ask_questions", ask_questions)
-graph.add_node("get_answers", get_answers)
-graph.add_node("make_resume_docx", make_resume_docx)
-graph.add_node("resume_improvements", resume_improvements,defer=True,)
-graph.add_node("create_draft_with_gmail_auth", create_draft_with_gmail_auth)
-graph.add_node("convert_docx_to_pdf",convert_docx_to_pdf)
-graph.add_node("write_email",write_email)
-graph.add_node("write_referral",write_referral)
-
-graph.add_edge(START,"read_pdf")
-graph.add_edge(START,"get_jd")
-graph.add_conditional_edges("get_jd",jd_provided,{True:"fill_jd",False:"get_jd"})
-graph.add_edge("read_pdf", "find_missing")
-graph.add_edge("find_missing", "ask_questions")
-graph.add_edge("ask_questions","get_answers")
-# graph.add_edge("fill_jd","resume_improvements")
-# graph.add_edge("ask_questions","resume_improvements")
-graph.add_conditional_edges("convert_docx_to_pdf",is_email_in_jd,{
-    "email_present":"write_email",
-    "email_absent":"write_referral"
-})
-graph.add_edge(["fill_jd","get_answers"],"resume_improvements")
-graph.add_edge("resume_improvements","fill_details")
-graph.add_edge("fill_details","make_resume_docx")
-graph.add_edge("make_resume_docx","convert_docx_to_pdf")
-#graph.add_edge("convert_docx_to_pdf","write_email")
-graph.add_edge("write_email","create_draft_with_gmail_auth")
-graph.add_edge("create_draft_with_gmail_auth",END)
-
-if __name__=="__main__":
-    graph = graph.compile()
-    graph.get_graph().draw_mermaid_png(output_file_path="graph.jpg")
-    init_state=ModelState(file_path=first_pdf)
-    output=graph.invoke(init_state)
+    graph = build_main_graph()
+    if os.environ.get("DRAW_GRAPHS"):
+        graph.get_graph().draw_mermaid_png(output_file_path="graph.jpg")
+    init_state = ModelState(file_path=first_pdf)
+    output = graph.invoke(init_state)
     print(output)

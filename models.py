@@ -76,6 +76,7 @@ class ModelState(BaseModel):
     model:Optional[Any]=Field(default="google|gemini-2.5-flash", description="model to be used by the agents")
     thought: Annotated[Optional[str],lambda x,y:y] = Field(default=None,description="temp variable to store output of previous node")
     file_path:Optional[str]=Field(default=None,description="path of the file")
+    resume_format: Optional[str] = Field(default="fmt1", description="selected resume docx format id: fmt1..fmt5")
     candidate_details:Optional[Details]=Field(default=None,description="Relevant Details of the candidate")
     jd:Optional[JD]=Field(default=None,description="job description of the job")
     docx_file:Optional[str]=Field(default=None,description="path of the word document file")

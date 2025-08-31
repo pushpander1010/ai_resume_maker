@@ -1,22 +1,24 @@
-# app.py
 import os
 import streamlit as st
 from pydantic import TypeAdapter
 
-from main import getting_input_graph, process_request, ModelState
-from tools import ensure_google_creds, sign_out
+from models import ModelState
+from main import build_getting_input_graph, build_process_request_graph
+from tools import ensure_google_creds, sign_out, get_model_instance
 
-# --- Page setup (do this first) ---
+# Page setup
 st.set_page_config(page_title="Resume AI Assistant", layout="centered")
-st.title("📄 Resume AI Assistant")
+st.title("Resume AI Assistant")
 
-# --- Local dev: allow http (safe to remove in production/Cloud) ---
+# Local dev: allow http (safe to remove in production/Cloud)
 os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-# --- Scopes (include OIDC so we can show name/email) ---
+# Scopes (include OIDC so we can show name/email)
 SCOPES = [
-    "openid", "email", "profile",
+    "openid",
+    "email",
+    "profile",
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/drive.metadata.readonly",
     "https://www.googleapis.com/auth/gmail.send",
@@ -24,11 +26,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
-# --- Model options & helper ---
-from langchain_google_genai import GoogleGenerativeAI
-from langchain_groq import ChatGroq
-from langchain_perplexity import ChatPerplexity
-
+# Model options
 MODEL_OPTIONS = [
     "google|gemini-2.5-pro",
     "google|gemini-2.5-flash",
@@ -38,24 +36,15 @@ MODEL_OPTIONS = [
     "groq|gemma-7b-it",
 ]
 
-def get_model_instance(model_key: str):
-    if model_key.startswith("google|"):
-        model_id = model_key.split("|", 1)[1]
-        return GoogleGenerativeAI(model=model_id, temperature=0.7)
-    elif model_key.startswith("groq|"):
-        model_id = model_key.split("|", 1)[1]
-        return ChatGroq(model=model_id, temperature=0.7)
-    elif model_key.startswith("perplexity|"):
-        model_id = model_key.split("|", 1)[1]
-        return ChatPerplexity(model=model_id, temperature=0.7)
-    else:
-        raise ValueError(f"Unknown model: {model_key}")
+@st.cache_resource(show_spinner=False)
+def _graphs():
+    return build_getting_input_graph(), build_process_request_graph()
 
-# --- Auth first (blocks until authenticated) ---
+# Auth first (blocks until authenticated)
 os.makedirs("input", exist_ok=True)
 creds = ensure_google_creds(SCOPES)
 
-# --- Header: show signed-in user & Logout ---
+# Header: show signed-in user & Logout
 left, right = st.columns([3, 1])
 with left:
     user_label = st.session_state.get("user_name") or st.session_state.get("user_email")
@@ -65,15 +54,12 @@ with right:
     if st.button("Logout"):
         sign_out()
 
-# ---------- Session State Setup ----------
-if "state" not in st.session_state:
-    st.session_state.state = None
-if "questions_answered" not in st.session_state:
-    st.session_state.questions_answered = False
-if "phase" not in st.session_state:
-    st.session_state.phase = "upload"
+# Session State Setup
+st.session_state.setdefault("state", None)
+st.session_state.setdefault("questions_answered", False)
+st.session_state.setdefault("phase", "upload")
 
-# ---------- Upload Phase ----------
+# Upload Phase
 if st.session_state.phase == "upload":
     uploaded_file = st.file_uploader("Upload your resume (PDF)", type=["pdf"])
     if uploaded_file:
@@ -81,28 +67,42 @@ if st.session_state.phase == "upload":
         st.session_state.phase = "jd"
         st.rerun()
 
-# ---------- JD + Model Selection Phase ----------
+# JD + Model Selection Phase
 if st.session_state.phase == "jd":
     model_choice = st.selectbox("Choose Model", MODEL_OPTIONS)
-    st.markdown("### ✏️ Provide Job Description")
+    format_labels = {
+        "fmt1": "Format 1 – Modern (Calibri, compact)",
+        "fmt2": "Format 2 – Classic (Times New Roman)",
+        "fmt3": "Format 3 – Clean (Arial)",
+        "fmt4": "Format 4 – Verdana Tight",
+        "fmt5": "Format 5 – Georgia Professional",
+    }
+    fmt_key = st.selectbox(
+        "Choose Resume Format",
+        options=list(format_labels.keys()),
+        format_func=lambda k: format_labels.get(k, k),
+        index=0,
+    )
+    st.markdown("### Provide Job Description")
     jd_text = st.text_area(
         "Paste the job description (include recruiter email if available)", height=300
     )
     if jd_text:
         st.session_state.jd_text = jd_text
         st.session_state.model_choice = model_choice
+        st.session_state.resume_format = fmt_key
         st.session_state.phase = "ready"
         st.rerun()
 
-# ---------- Generate Button ----------
+# Generate Button
 if st.session_state.phase == "ready":
-    if st.button("✨ Generate Updated Resume"):
+    if st.button("Generate Updated Resume"):
         st.session_state.phase = "processing"
         st.rerun()
 
-# ---------- Processing Initial Resume ----------
+# Processing Initial Resume
 if st.session_state.phase == "processing":
-    with st.spinner("🔄 Processing your resume..."):
+    with st.spinner("Processing your resume..."):
         try:
             file_path = os.path.join("input", st.session_state.uploaded_file.name)
             with open(file_path, "wb") as f:
@@ -113,9 +113,11 @@ if st.session_state.phase == "processing":
                 file_path=file_path,
                 jd={"raw_jd": st.session_state.jd_text},
                 model=model_instance,
+                resume_format=st.session_state.get("resume_format", "fmt1"),
                 gmail_auth_creds=creds,
             )
 
+            getting_input_graph, _ = _graphs()
             raw_state = getting_input_graph.invoke(init_state)
             st.session_state.state = (
                 raw_state
@@ -131,12 +133,12 @@ if st.session_state.phase == "processing":
             st.rerun()
 
         except Exception as e:
-            st.error(f"❌ Error: {e}")
+            st.error(f"Error: {e}")
             st.session_state.phase = "upload"
 
-# ---------- Questions Phase ----------
+# Questions Phase
 if st.session_state.phase == "questions":
-    with st.expander("📝 Missing Resume Info (Click to Answer)", expanded=True):
+    with st.expander("Missing Resume Info (Click to Answer)", expanded=True):
         st.warning("Your resume is missing some important information. Please answer the following:")
 
         updated_questions = []
@@ -147,24 +149,25 @@ if st.session_state.phase == "questions":
 
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("✅ Submit Answers"):
+            if st.button("Submit Answers"):
                 for i, q in enumerate(st.session_state.state.questions.questions):
                     q.answer = st.session_state.get(f"q_{i}", "")
                 st.session_state.questions_answered = True
                 st.session_state.phase = "processing_answers"
                 st.rerun()
         with c2:
-            if st.button("🚫 Ignore"):
+            if st.button("Ignore"):
                 for q in st.session_state.state.questions.questions:
                     q.answer = ""
                 st.session_state.questions_answered = True
                 st.session_state.phase = "processing_answers"
                 st.rerun()
 
-# ---------- Processing Answers ----------
+# Processing Answers
 if st.session_state.phase == "processing_answers":
-    with st.spinner("🔄 Processing your answers..."):
+    with st.spinner("Processing your answers..."):
         try:
+            _, process_request = _graphs()
             raw_state = process_request.invoke(st.session_state.state)
             st.session_state.state = (
                 raw_state
@@ -174,38 +177,40 @@ if st.session_state.phase == "processing_answers":
             st.session_state.phase = "final"
             st.rerun()
         except Exception as e:
-            st.error(f"❌ Error: {e}")
+            st.error(f"Error: {e}")
             st.session_state.phase = "upload"
 
-# ---------- Final Output Phase ----------
+# Final Output Phase
 if st.session_state.phase == "final":
     state = st.session_state.state
-    st.success("✅ Resume & Email generated successfully!")
+    st.success("Resume & Email generated successfully!")
 
     if state.docx_file and os.path.exists(state.docx_file):
-        st.download_button(
-            "📄 Download Resume (DOCX)",
-            open(state.docx_file, "rb"),
-            file_name="Updated_Resume.docx",
-        )
+        with open(state.docx_file, "rb") as f:
+            st.download_button(
+                "Download Resume (DOCX)",
+                f,
+                file_name="Updated_Resume.docx",
+            )
 
     if state.pdf_file and os.path.exists(state.pdf_file):
-        st.download_button(
-            "🧾 Download Resume (PDF)",
-            open(state.pdf_file, "rb"),
-            file_name="Updated_Resume.pdf",
-        )
+        with open(state.pdf_file, "rb") as f:
+            st.download_button(
+                "Download Resume (PDF)",
+                f,
+                file_name="Updated_Resume.pdf",
+            )
 
     if state.gmail_message and state.gmail_message.body:
-        with st.expander("📨 Generated Email"):
+        with st.expander("Generated Email"):
             st.markdown(f"**To:** {state.gmail_message.to}")
             st.markdown(f"**Subject:** {state.gmail_message.subject}")
             st.text_area("Email Body", state.gmail_message.body, height=200)
     elif getattr(state, "referral_message", None):
-        with st.expander("🤝 Referral Message"):
+        with st.expander("Referral Message"):
             st.text_area("Referral Text", state.referral_message, height=150)
 
-    if st.button("🔄 Create Another"):
+    if st.button("Create Another"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()

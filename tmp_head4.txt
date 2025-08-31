@@ -1,0 +1,221 @@
+        paragraph._p.append(hyperlink)
+        return paragraph
+
+    # Borderless 2-col row (left text + right text)
+    def add_row_2col(left_text, right_text, left_bold=False):
+        table = doc.add_table(rows=1, cols=2)
+
+        # remove borders
+        tbl = table._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
+        tblPr.append(borders)
+
+        # column widths
+        try:
+            table.columns[0].width = Inches(5.8)
+            table.columns[1].width = Inches(1.6)
+        except Exception:
+            pass  # width setting can be flaky; safe to ignore
+
+        left, right = table.rows[0].cells
+        p_left = left.paragraphs[0]
+        run_left = p_left.add_run(left_text)
+        run_left.bold = left_bold
+        set_spacing(p_left, after=0)
+
+        p_right = right.paragraphs[0]
+        p_right.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+        p_right.add_run(right_text)
+        set_spacing(p_right, after=0)
+
+        return table
+
+    # Thin rule under header
+    def add_rule():
+        t = doc.add_table(rows=1, cols=1)
+        tbl = t._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "6")
+        bottom.set(qn("w:color"), "999999")
+        borders.append(bottom)
+        tblPr.append(borders)
+        t.rows[0].cells[0].paragraphs[0].add_run("")
+        set_spacing(t.rows[0].cells[0].paragraphs[0], after=6)
+
+    # === Header ===
+    if getattr(state.candidate_details, "name", None):
+        name_para = doc.add_paragraph(style="HeaderName")
+        name_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        name_para.add_run(state.candidate_details.name.upper())
+        set_spacing(name_para, after=2)
+
+    contact_para = doc.add_paragraph(style="HeaderContact")
+    contact_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    contact_bits = []
+
+    if getattr(state.candidate_details, "email", None):
+        contact_bits.append(("mailto:" + state.candidate_details.email, state.candidate_details.email))
+    if getattr(state.candidate_details, "phone", None):
+        contact_bits.append(("tel:" + state.candidate_details.phone, state.candidate_details.phone))
+    profiles = getattr(state.candidate_details, "profiles", []) or []
+    for prof in profiles:
+        url = getattr(prof, "url", None) if hasattr(prof, "url") else str(prof)
+        if url:
+            contact_bits.append((url, url))
+
+    for i, (url, text) in enumerate(contact_bits):
+        add_hyperlink(contact_para, text, url)
+        if i < len(contact_bits) - 1:
+            contact_para.add_run("  •  ")
+    set_spacing(contact_para, after=6)
+    add_rule()
+
+    # === Summary ===
+    summary = getattr(state.candidate_details, "summary", None)
+    if summary:
+        p = doc.add_paragraph("Summary", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+        doc.add_paragraph(summary, style="Tight")
+
+    # === Skills ===
+    skills = getattr(state.candidate_details, "skills", None)
+    if skills:
+        p = doc.add_paragraph("Skills", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+        doc.add_paragraph(join_clean(list(map(str, skills))), style="Tight")
+
+    # === Experience ===
+    experience = getattr(state.candidate_details, "experience", None)
+    if experience:
+        p = doc.add_paragraph("Professional Experience", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+
+        for exp in experience:
+            title = getattr(exp, "title", "") or ""
+            company = getattr(exp, "company", "") or ""
+            location = getattr(exp, "location", "") or ""
+            sd = fmt_date(getattr(exp, "start_date", ""))
+            ed_raw = getattr(exp, "end_date", None)
+            ed = fmt_date(ed_raw) if ed_raw else "Present"
+
+            left_line = join_clean([s for s in [title, company] if s], sep=", ")
+            right_line = join_clean([s for s in [location] if s], sep="")
+
+            add_row_2col(left_line, f"{sd} – {ed}", left_bold=True)
+            if right_line:
+                add_row_2col("", right_line)
+
+            responsibilities = getattr(exp, "responsibilities", None) or []
+            for item in responsibilities:
+                add_bullet(str(item))
+
+    # === Projects ===
+    projects = getattr(state.candidate_details, "projects", None)
+    if projects:
+        p = doc.add_paragraph("Projects", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+
+        for proj in projects:
+            name = getattr(proj, "name", "") or ""
+            techs = getattr(proj, "technologies", None) or []
+            descr = getattr(proj, "description", "") or ""
+            date_txt = fmt_date(getattr(proj, "date", "")) if getattr(proj, "date", None) else ""
+            link = getattr(proj, "link", None)
+
+            header_left = join_clean([name, f"({date_txt})" if date_txt else ""], sep=" ")
+            add_row_2col(header_left, "", left_bold=True)
+
+            if descr:
+                doc.add_paragraph(descr, style="Tight")
+            if techs:
+                doc.add_paragraph("Technologies: " + ", ".join(map(str, techs)), style="Tight")
+            if link:
+                lp = doc.add_paragraph(style="Tight")
+                add_hyperlink(lp, str(link), str(link))
+
+    # === Education ===
+    education = getattr(state.candidate_details, "education", None)
+    if education:
+        p = doc.add_paragraph("Education", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+
+        for edu in education:
+            degree = getattr(edu, "degree", "") or ""
+            institute = getattr(edu, "institute", "") or ""
+            sd = fmt_date(getattr(edu, "start_date", ""))
+            ed_raw = getattr(edu, "end_date", None)
+            ed = fmt_date(ed_raw) if ed_raw else "Present"
+            left = join_clean([degree, institute], sep=", ")
+            add_row_2col(left, f"{sd} – {ed}")
+
+            gpa = getattr(edu, "gpa", None)
+            if gpa:
+                doc.add_paragraph(f"GPA: {gpa}", style="Tight")
+            coursework = getattr(edu, "coursework", None)
+            if coursework:
+                doc.add_paragraph("Relevant coursework: " + ", ".join(map(str, coursework)), style="Tight")
+
+    # === Certifications ===
+    certs = getattr(state.candidate_details, "certifications", None)
+    if certs:
+        p = doc.add_paragraph("Certifications", style="SectionHeader")
+        p.paragraph_format.keep_with_next = True
+        for cert in certs:
+            name = getattr(cert, "name", "") or ""
+            issuer = getattr(cert, "issuer", "") or ""
+            cdate = fmt_date(getattr(cert, "date", "")) if getattr(cert, "date", None) else ""
+            left = join_clean([name, issuer], sep=" — ")
+            add_row_2col(left, cdate)
+
+    # === Save ===
+    base = getattr(state, "file_path", None) or "resume.docx"
+    root, _ = os.path.splitext(base)
+    output_path = root + ".docx"
+    doc.save(output_path)
+    return {"docx_file": output_path}
+
+
+def is_email_in_jd(state:ModelState):
+    if state.jd.email and "@" in state.jd.email:
+        return "email_present"
+    else:
+        return "email_absent"
+
+def write_referral(state: ModelState):
+    prompt = PromptTemplate.from_template("""
+You are a job applicant seeking a referral. Write a short and professional LinkedIn-style referral message (60–100 words max) to someone working at the company.
+
+Use the following:
+- Job Description:
+{jd}
+
+- Resume Summary:
+{resume}
+
+Write in a polite, concise tone. Don't assume familiarity.
+""")
+
+    chain = (
+        prompt
+        | get_model_instance(model_key=state.model)  # or whatever LLM you use
+        | StrOutputParser()
+    )
+
+    output = chain.invoke({
+        "jd": state.jd,
+        "resume": state.thought
+    })
+
+    return {"referral_message": output}

@@ -1,0 +1,250 @@
+from docx2pdf import convert
+from models import ModelState,Details,JD,GmailMessage,Question,QuestionList
+from langchain_community.document_loaders import TextLoader
+from langchain_google_genai import GoogleGenerativeAI
+from langchain_core.prompts import PromptTemplate
+import urllib
+import json
+import os, io, pickle, urllib
+from urllib.parse import urlparse
+from typing import Optional
+import streamlit as st
+from google.oauth2.credentials import Credentials
+from datetime import date, datetime
+from docx import Document
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+import docx
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from google.oauth2.credentials import Credentials
+from pydantic import BaseModel
+import uuid
+from typing import List,Optional
+from docx import Document
+from docx.shared import Pt, Inches
+from langchain_core.output_parsers import StrOutputParser,PydanticOutputParser
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from docx.shared import Pt
+import os, io
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from PyPDF2 import PdfReader
+from langchain.output_parsers import PydanticOutputParser
+from docx2pdf import convert
+import re
+from bs4 import BeautifulSoup
+from langchain_community.document_loaders import RecursiveUrlLoader
+from dotenv import load_dotenv
+from docx import Document
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from langchain_groq import ChatGroq
+from langchain_perplexity import ChatPerplexity
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+import os
+import pickle
+from email.message import EmailMessage
+import base64
+import mimetypes
+import mimetypes
+from email.message import EmailMessage
+from email.mime.base import MIMEBase
+from email import encoders
+import streamlit as st
+import os, pickle
+from google_auth_oauthlib.flow import InstalledAppFlow, Flow
+from google.auth.transport.requests import Request
+import os, io, pickle, urllib
+from urllib.parse import urlparse
+from typing import Optional
+import streamlit as st
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+
+#load_dotenv()
+load_dotenv(dotenv_path="environ.env")
+
+
+import os, io, pickle, urllib
+from typing import Optional
+from urllib.parse import urlparse
+
+import streamlit as st
+import streamlit.components.v1 as components
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+import os, pickle, urllib, pathlib
+from typing import Optional
+
+import streamlit as st
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
+from oauthlib.oauth2.rfc6749.errors import InvalidGrantError
+
+import os, pickle, urllib, pathlib
+import streamlit as st
+from typing import Optional
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
+import streamlit as st
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
+from oauthlib.oauth2.rfc6749.errors import InvalidGrantError
+
+# ---- per-user token storage ----
+def _tokens_dir() -> str:
+    d = "tokens"
+    pathlib.Path(d).mkdir(exist_ok=True)
+    return d
+
+def _user_token_path(user_sub: str) -> str:
+    return os.path.join(_tokens_dir(), f"{user_sub}.pickle")
+
+def _load_creds_for_user(user_sub: str) -> Optional[Credentials]:
+    p = _user_token_path(user_sub)
+    if not os.path.exists(p):
+        return None
+    try:
+        creds = pickle.load(open(p, "rb"))
+    except Exception:
+        return None
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            pickle.dump(creds, open(p, "wb"))
+        except Exception:
+            return None
+    return creds if creds and creds.valid else None
+
+def _save_creds_for_user(creds: Credentials, client_id: str) -> tuple[str, str]:
+    """Return (user_sub, email) and persist token to tokens/{sub}.pickle."""
+    if not creds.id_token:
+        creds.refresh(Request())
+    claims = google_id_token.verify_oauth2_token(
+        creds.id_token, google_requests.Request(), client_id
+    )
+    user_sub = claims["sub"]
+    email = claims.get("email", "")
+    name = claims.get("name") or email
+
+    pickle.dump(creds, open(_user_token_path(user_sub), "wb"))
+    st.session_state.user_sub = user_sub
+    st.session_state.user_email = email
+    st.session_state.user_name = name
+    return user_sub, email
+
+def _clear_query_params():
+    try:
+        st.query_params.clear()          # Streamlit >= 1.30
+    except Exception:
+        st.experimental_set_query_params()  # legacy
+
+def sign_out():
+    """Clear THIS user's token & session, then rerun."""
+    sub = st.session_state.get("user_sub")
+    if sub:
+        try:
+            p = _user_token_path(sub)
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+    for k in ("user_sub", "user_email", "user_name", "oauth_code_exchanged"):
+        st.session_state.pop(k, None)
+    st.rerun()
+
+def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Credentials:
+    """
+    Same-tab OAuth with per-user tokens.
+      Requires env/secrets:
+        GOOGLE_CLIENT_ID
+        GOOGLE_CLIENT_SECRET
+        GOOGLE_REDIRECT_URI (http://localhost:8501/ OR https://<app>.streamlit.app/)
+    Stores name/email in st.session_state.
+    """
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
+
+    # ---- Guardrails
+    if not client_id or not client_secret:
+        st.error("Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.")
+        st.stop()
+    if not redirect_uri or not redirect_uri.endswith("/"):
+        st.error("Set GOOGLE_REDIRECT_URI to your app URL with trailing slash.")
+        st.stop()
+    if "streamlit.app" in redirect_uri and not redirect_uri.startswith("https://"):
+        st.error("On Streamlit Cloud, GOOGLE_REDIRECT_URI must begin with https://")
+        st.stop()
+
+    # Local http dev
+    if redirect_uri.startswith("http://"):
+        os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+        os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
+    # Session guards
+    st.session_state.setdefault("oauth_code_exchanged", False)
+    st.session_state.setdefault("user_sub", None)
+
+    # ---- Per-user cached token ONLY (no global token!)
+    if st.session_state.user_sub and not force_refresh:
+        cached = _load_creds_for_user(st.session_state.user_sub)
+        if cached:
+            # fill name/email if not already set
+            if not st.session_state.get("user_email"):
+                try:
+                    if not cached.id_token:
+                        cached.refresh(Request())
+                    claims = google_id_token.verify_oauth2_token(
+                        cached.id_token, google_requests.Request(), client_id
+                    )
+                    st.session_state.user_email = claims.get("email")
+                    st.session_state.user_name = claims.get("name") or claims.get("email")
+                except Exception:
+                    pass
+            return cached
+
+    # ---- Read callback params
+    try:
+        qp = dict(st.query_params)
+    except Exception:
+        qp = st.experimental_get_query_params()
+
+    def _one(k):
+        v = qp.get(k)
+        return v[0] if isinstance(v, list) else v
+
+    code = _one("code")
+    error = _one("error")
+    if error:
+        st.error(f"OAuth error: {error}")
+        _clear_query_params()
+        st.stop()
+
+    client_config = {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,

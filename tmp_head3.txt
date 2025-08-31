@@ -1,0 +1,250 @@
+def fill_jd(state:ModelState)->ModelState:
+    print("Filling JD")
+    "Given the jd content it fills the JD pydantic get_model_instance(model_key=state.model) object"
+    content=state.jd.raw_jd
+    parser=PydanticOutputParser(pydantic_object=JD)
+    prompt=PromptTemplate(template="""You are good at extracting and filling data in a given template.
+                          Task is to fill template: \n{template}, based on given content:\n{content}, return the output in STRICT format :\n{template}"""
+                          ,input_variables=["content"],partial_variables={"template":parser.get_format_instructions()})
+    chain=prompt | get_model_instance(model_key=state.model) | parser
+    output=chain.invoke({"content":content})
+    return {"jd":output}
+
+
+#Helpers
+def read_pdf(state: ModelState) -> ModelState:
+    print("reading pdf")
+    """Reads a PDF and returns a Details object with text in `thought`."""
+
+    reader = PdfReader(state.file_path)
+    content = "\n".join(page.extract_text() or "" for page in reader.pages)
+    return {"thought": content}
+
+def find_missing(state: ModelState):
+    print("finding missing")
+    template_parser = PydanticOutputParser(pydantic_object=Details)
+    prompt = PromptTemplate(
+        template="""
+You are a resume evaluator.
+
+Given the following extracted resume information:\n
+{resume}
+\n
+And the required structured format:\n
+{template}
+\n
+Identify the specific fields or types of information that are missing from the resume but are required to fully complete the given template.
+
+For example, if work experience dates or job titles are absent, mention them.
+ONLY mention missing items.
+List the missing items clearly and concisely, separated by commas.
+Only return the field names or types of data that are missing.
+""",
+        input_variables=["resume", "template"]
+    )
+    chain = prompt | get_model_instance(model_key=state.model) | StrOutputParser()
+    output = chain.invoke({"resume": state.thought, "template": template_parser.get_format_instructions()})
+    thought = state.thought + "\n" + output
+    return {"thought": thought}
+
+def ask_questions(state: ModelState):
+    print("Making user questions")
+    parser = PydanticOutputParser(pydantic_object=QuestionList)
+    prompt = PromptTemplate(
+        template="""
+You are an AI assistant helping to improve a candidate's resume.
+Given the raw resume {resume}
+The following information is missing and needs to be collected:
+{missing}
+
+For each missing item, ask a clear and relevant question based on the resume to the user to gather that information. Give examples of possible answer in brackets.
+Return your output in the following STRICT format:
+{format}
+""",
+        input_variables=["missing","resume"],
+        partial_variables={"format": parser.get_format_instructions()}
+    )
+    chain = prompt | get_model_instance(model_key=state.model) | parser
+    thought = state.thought
+    missing = thought.split("\n")[-1]
+    previous_thought = "\n".join(thought.split("\n")[:-1])
+    questions = chain.invoke({"missing": missing,"resume":previous_thought})
+    return {"questions": questions}
+
+def get_answers(state: ModelState):
+    print("Getting user answers")
+
+    for ques in state.questions.questions:
+        a = input(ques.question)
+        ques.answer = a  # ✅ Update in-place
+
+    return {"questions": state.questions}  # ✅ Mutated questions list is returned
+
+# --- Node 2: Fill State ---
+def fill_details(state: ModelState) -> ModelState:
+    print("filling details")
+    """Extracts structured info from `thought` using Gemini + Pydantic parser."""
+    parser = PydanticOutputParser(pydantic_object=Details)
+
+    prompt = PromptTemplate(
+        template=(
+            """Given the candidate details :{candidate_data}\n
+            Extract details ,fill and return the following STRICT format:\n{format_instructions}"""
+        ),
+        input_variables=["candidate_data"],
+        partial_variables={"format_instructions": parser.get_format_instructions()}
+    )
+
+    chain = prompt | get_model_instance(model_key=state.model) | parser
+    output=chain.invoke({"candidate_data": state.thought})
+
+    return {"candidate_details":output}
+
+def resume_improvements(state: ModelState) -> ModelState:
+    print("Improving resume with JD alignment...")
+    call_id = uuid.uuid4().hex[:8]
+    print(f"[resume_improvements] Call ID: {call_id}, has JD: {bool(state.jd)}, has Resume: {bool(state.thought)}")
+    prompt = PromptTemplate(
+        template="""You are an expert resume writer and job application optimizer.
+
+Given the following:
+- Job Description : {jd}
+- Candidate's Resume: {thought}
+- and missing data from resume in form of question answers:{questions}
+
+Your task:
+- Improve the resume using ONLY the information already present in the resume.
+- Enhance grammar, spelling, and sentence flow.
+- Use professional and high-impact action verbs.
+- Ensure the resume aligns strongly with the job description.
+- Focus on ATS optimization (use relevant keywords from the JD).
+- DO NOT fabricate or introduce new experiences, skills, or qualifications.
+- The final result must look professional and be compelling.
+- Ensure the word count remains under 600 words.
+
+Respond ONLY with the improved resume content.
+""",
+        input_variables=["jd", "thought","questions"]
+    )
+
+    chain = prompt | get_model_instance(model_key=state.model) | StrOutputParser()
+    improved_resume = chain.invoke({"jd": state.jd, "thought": state.thought,"questions":state.questions})
+
+    return {"thought": improved_resume}
+
+def make_resume_docx(state: ModelState) -> ModelState:
+    """
+    Generates a clean, ATS-friendly resume (fixed bullet handling):
+    - Single column, 0.5" margins
+    - Centered name/contact + thin rule
+    - Section headers in small-caps style
+    - Dates right-aligned via borderless 2-col tables
+    - SAFE bullet helper that never relies on doc.styles.get()
+    """
+
+    def fmt_date(d):
+        if not d:
+            return ""
+        try:
+            if isinstance(d, (date, datetime)):
+                return d.strftime("%b %Y")
+            for fmt in ("%Y-%m-%d", "%Y-%m", "%d-%m-%Y", "%m/%d/%Y", "%b %Y", "%B %Y", "%Y"):
+                try:
+                    return datetime.strptime(str(d), fmt).strftime("%b %Y")
+                except Exception:
+                    pass
+            return str(d)
+        except Exception:
+            return str(d)
+
+    def join_clean(items, sep=" • "):
+        return sep.join([str(s) for s in items if s])
+
+    doc = Document()
+
+    # === Page & base font ===
+    for section in doc.sections:
+        section.top_margin = Inches(0.5)
+        section.bottom_margin = Inches(0.5)
+        section.left_margin = Inches(0.5)
+        section.right_margin = Inches(0.5)
+
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+    normal.font.size = Pt(10.5)
+
+    # === Styles (idempotent) ===
+    def ensure_style(name, base="Normal", size=10.5, bold=False, all_caps=False, color=RGBColor(0, 0, 0)):
+        try:
+            st = doc.styles[name]
+        except KeyError:
+            st = doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+            st.base_style = doc.styles[base]
+        st.font.name = "Calibri"
+        st._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+        st.font.size = Pt(size)
+        st.font.bold = bold
+        st.font.all_caps = all_caps
+        st.font.color.rgb = color
+        st.paragraph_format.space_before = Pt(0)
+        st.paragraph_format.space_after = Pt(2)
+        st.paragraph_format.line_spacing = 1.05
+        return st
+
+    ensure_style("SectionHeader", size=10, bold=True, all_caps=True, color=RGBColor(45, 45, 45))
+    ensure_style("HeaderName", size=20, bold=True, all_caps=True)
+    ensure_style("HeaderContact", size=10)
+    ensure_style("Tight", size=10.5)
+
+    def set_spacing(p, before=0, after=2, line=1.05):
+        pf = p.paragraph_format
+        pf.space_before = Pt(before)
+        pf.space_after = Pt(after)
+        pf.line_spacing = line
+
+    # Bullet helper that never fails
+    def add_bullet(text: str):
+        # Try to use the built-in numbered/bulleted style if present
+        try:
+            _ = doc.styles["List Bullet"]  # will raise KeyError if missing
+            p = doc.add_paragraph(text, style="List Bullet")
+            # tighten spacing & indent
+            pf = p.paragraph_format
+            pf.left_indent = Inches(0.2)
+            pf.first_line_indent = Inches(-0.12)
+            set_spacing(p, before=0, after=2, line=1.05)
+            return p
+        except KeyError:
+            # Fallback: render a visual bullet
+            p = doc.add_paragraph(u"\u2022 " + str(text), style="Tight")
+            pf = p.paragraph_format
+            pf.left_indent = Inches(0.2)
+            pf.first_line_indent = Inches(0)
+            set_spacing(p, before=0, after=2, line=1.05)
+            return p
+
+    # Hyperlink helper
+    def add_hyperlink(paragraph, text, url):
+        part = paragraph.part
+        r_id = part.relate_to(
+            url,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            is_external=True,
+        )
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), r_id)
+
+        new_run = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), "1155CC")
+        u = OxmlElement("w:u")
+        u.set(qn("w:val"), "single")
+        rPr.append(color)
+        rPr.append(u)
+        new_run.append(rPr)
+        text_node = OxmlElement("w:t")
+        text_node.text = text
+        new_run.append(text_node)
+        hyperlink.append(new_run)
