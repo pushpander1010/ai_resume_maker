@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
+from pydantic import ConfigDict
 from typing import Optional, List,Any,Annotated, Union
 # --- Models ---
 class Experience(BaseModel):
@@ -73,6 +74,7 @@ class QuestionList(BaseModel):
     questions:Optional[list[Question]]=Field(default=None,description="list of questions to be asked regarding the missing data in resume.")
 
 class ModelState(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     model:Optional[Any]=Field(default="google|gemini-2.5-flash", description="model to be used by the agents")
     thought: Annotated[Optional[str],lambda x,y:y] = Field(default=None,description="temp variable to store output of previous node")
     file_path:Optional[str]=Field(default=None,description="path of the file")
@@ -81,7 +83,7 @@ class ModelState(BaseModel):
     resume_font: Optional[str] = Field(default="calibri", description="font key from preset list")
     resume_color: Optional[str] = Field(default="blue", description="color key from preset list")
     candidate_details:Optional[Details]=Field(default=None,description="Relevant Details of the candidate")
-    jd:Optional[Union[JD, dict]]=Field(default=None,description="job description (JD model or dict)")
+    jd:Optional[Any]=Field(default=None,description="job description (JD model or dict)")
     docx_file:Optional[str]=Field(default=None,description="path of the word document file")
     pdf_file:Optional[str]=Field(default=None,description="path of the pdf document file")
     gmail_auth_creds:Optional[Any]=Field(default=None,description="gmail service object")
