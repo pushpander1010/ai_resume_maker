@@ -83,6 +83,7 @@ class ModelState(BaseModel):
     resume_layout: Optional[str] = Field(default="classic", description="layout key: classic|banner|sidebar|compact|modern")
     resume_font: Optional[str] = Field(default="calibri", description="font key from preset list")
     resume_color: Optional[str] = Field(default="blue", description="color key from preset list")
+    user_request: Optional[str] = Field(default=None, description="Optional additional request from user for customization")
     candidate_details:Optional[Details]=Field(default=None,description="Relevant Details of the candidate")
     jd:Optional[JD]=Field(default=None,description="job description (JD model)")
     docx_file:Optional[str]=Field(default=None,description="path of the word document file")

@@ -324,9 +324,16 @@ if st.session_state.phase == "jd":
     jd_text = st.text_area(
         "Paste the job description (include recruiter email if available)", height=300
     )
+    user_req = st.text_area(
+        "User request (additional) — optional",
+        value=st.session_state.get("user_request", ""),
+        height=120,
+        help="Add any specific ask, tone, format, or constraints you want the agent to consider.",
+    )
     if jd_text:
         st.session_state.jd_text = jd_text
         st.session_state.model_choice = model_choice
+        st.session_state.user_request = user_req
         st.session_state.resume_layout = layout_key
         st.session_state.resume_font = font_key
         st.session_state.resume_color = color_key
@@ -359,6 +366,7 @@ if st.session_state.phase == "processing":
                 resume_layout=st.session_state.get("resume_layout", "classic"),
                 resume_font=st.session_state.get("resume_font", "calibri"),
                 resume_color=st.session_state.get("resume_color", "blue"),
+                user_request=st.session_state.get("user_request"),
                 gmail_auth_creds=creds,
             )
 

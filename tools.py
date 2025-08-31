@@ -303,17 +303,22 @@ def write_email(state: ModelState) -> ModelState:
             "You are an expert email drafter, known for your ability to draft professional emails.\n\n"
             "Given candidate details:\n{candidate_details}\n\n"
             "Draft a professional email based on the job description:\n{jd}\n\n"
+            "Additional user request (optional, prioritize if present):\n{user_request}\n\n"
             "Required fields:\n"
             "  `to`: string\n"
             "  `subject`: string\n"
             "  `body`: string\n\n"
             "Return the output in STRICT format:\n{template}"
         ),
-        input_variables=["candidate_details", "jd"],
+        input_variables=["candidate_details", "jd", "user_request"],
         partial_variables={"template": parser.get_format_instructions()},
     )
     chain = prompt | get_model_instance(model_key=state.model) | parser
-    output = chain.invoke({"candidate_details": state.candidate_details, "jd": state.jd})
+    output = chain.invoke({
+        "candidate_details": state.candidate_details,
+        "jd": state.jd,
+        "user_request": getattr(state, "user_request", None) or "",
+    })
     # Force the recipient to JD.email to avoid LLM hallucinations
     jd_email = None
     if state.jd:
@@ -1433,7 +1438,7 @@ Write in a polite, concise tone. Don't assume familiarity.
     )
 
     chain = prompt | get_model_instance(model_key=state.model) | StrOutputParser()
-    output = chain.invoke({"jd": state.jd, "resume": state.thought})
+    output = chain.invoke({"jd": state.jd, "resume": state.thought, "user_request": getattr(state, "user_request", None) or ""})
     return {"referral_message": output}
 
 
