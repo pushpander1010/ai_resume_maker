@@ -46,9 +46,16 @@ load_dotenv(dotenv_path="environ.env")
 
 # ---- per-user token storage ----
 def _tokens_dir() -> str:
-    d = "tokens"
-    pathlib.Path(d).mkdir(exist_ok=True)
-    return d
+    """Return the secure token directory (env TOKENS_DIR or ./tokens)."""
+    d = os.environ.get("TOKENS_DIR") or "tokens"
+    p = pathlib.Path(d)
+    p.mkdir(exist_ok=True)
+    # Best-effort restrictive permissions
+    try:
+        os.chmod(str(p), 0o700)
+    except Exception:
+        pass
+    return str(p)
 
 
 def _user_token_path(user_sub: str) -> str:
@@ -60,6 +67,11 @@ def _load_creds_for_user(user_sub: str) -> Optional[Credentials]:
     if not os.path.exists(p):
         return None
     try:
+        # Best-effort restrict file perms
+        try:
+            os.chmod(p, 0o600)
+        except Exception:
+            pass
         creds = pickle.load(open(p, "rb"))
     except Exception:
         return None
@@ -67,6 +79,10 @@ def _load_creds_for_user(user_sub: str) -> Optional[Credentials]:
         try:
             creds.refresh(Request())
             pickle.dump(creds, open(p, "wb"))
+            try:
+                os.chmod(p, 0o600)
+            except Exception:
+                pass
         except Exception:
             return None
     return creds if creds and creds.valid else None
@@ -82,11 +98,40 @@ def _save_creds_for_user(creds: Credentials, client_id: str) -> tuple[str, str]:
     email = claims.get("email", "")
     name = claims.get("name") or email
 
-    pickle.dump(creds, open(_user_token_path(user_sub), "wb"))
+    token_path = _user_token_path(user_sub)
+    pickle.dump(creds, open(token_path, "wb"))
+    try:
+        os.chmod(token_path, 0o600)
+    except Exception:
+        pass
     st.session_state.user_sub = user_sub
     st.session_state.user_email = email
     st.session_state.user_name = name
     return user_sub, email
+
+
+def _assert_creds_match_session(creds: Credentials, client_id: str):
+    """Ensure Google creds belong to the same user as in session_state.
+    If not, force sign-out to prevent cross-user leakage.
+    """
+    try:
+        if not creds.id_token:
+            creds.refresh(Request())
+        claims = google_id_token.verify_oauth2_token(creds.id_token, google_requests.Request(), client_id)
+        sub = claims.get("sub")
+        email = claims.get("email")
+        sess_sub = st.session_state.get("user_sub")
+        sess_email = st.session_state.get("user_email")
+        if sess_sub and sub and sess_sub != sub:
+            st.error("Session mismatch detected. Please sign in again.")
+            sign_out()
+        if sess_email and email and sess_email.lower() != email.lower():
+            st.error("Email mismatch detected. Please sign in again.")
+            sign_out()
+    except Exception:
+        # On verification failure, require re-auth
+        st.error("Could not verify credentials. Please sign in again.")
+        sign_out()
 
 
 def _clear_query_params():
@@ -146,6 +191,8 @@ def ensure_google_creds(scopes: list[str], *, force_refresh: bool = False) -> Cr
                     st.session_state.user_name = claims.get("name") or claims.get("email")
                 except Exception:
                     pass
+            # Ensure the cached creds match the current session user
+            _assert_creds_match_session(cached, client_id)
             return cached
 
     try:
@@ -295,6 +342,13 @@ def convert_docx_to_pdf(state: ModelState) -> ModelState:
     st.session_state.oauth_payload = {"docx_file": state.docx_file}
 
     creds = state.gmail_auth_creds or ensure_google_creds(SCOPES)
+    # Verify creds belong to this session user
+    try:
+        client_id = os.environ.get("GOOGLE_CLIENT_ID") or ""
+        if client_id:
+            _assert_creds_match_session(creds, client_id)
+    except Exception:
+        return {}
 
     if st.session_state.oauth_pending_action == "convert_docx_to_pdf":
         st.session_state.oauth_pending_action = None
@@ -353,6 +407,11 @@ def create_draft_with_gmail_auth(state: ModelState) -> ModelState:
 
     profile = service.users().getProfile(userId="me").execute()
     from_addr = profile["emailAddress"]
+    # Ensure the Gmail profile matches the signed-in user
+    sess_email = st.session_state.get("user_email")
+    if sess_email and sess_email.lower() != str(from_addr).lower():
+        st.error("Authenticated Gmail account mismatch. Please sign in again.")
+        sign_out()
 
     to_addr = (state.gmail_message.to if state.gmail_message and state.gmail_message.to else "example@example.com")
     subject = (state.gmail_message.subject if state.gmail_message and state.gmail_message.subject else "AI Test")
