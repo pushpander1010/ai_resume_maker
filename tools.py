@@ -1407,6 +1407,417 @@ Write in a polite, concise tone. Don't assume familiarity.
     return {"referral_message": output, "gmail_message": gm}
 
 
+FONTS = {
+    "calibri": ("Calibri", 10.5),
+    "times": ("Times New Roman", 11),
+    "arial": ("Arial", 10.5),
+    "verdana": ("Verdana", 10),
+    "georgia": ("Georgia", 11),
+    "garamond": ("Garamond", 11),
+    "cambria": ("Cambria", 11),
+    "tahoma": ("Tahoma", 10.5),
+    "trebuchet": ("Trebuchet MS", 10.5),
+    "centurygothic": ("Century Gothic", 10.5),
+}
+
+COLORS = {
+    "blue": (47, 84, 235),
+    "teal": (0, 150, 136),
+    "green": (46, 125, 50),
+    "red": (244, 67, 54),
+    "purple": (156, 39, 176),
+    "slate": (96, 125, 139),
+    "orange": (255, 87, 34),
+    "navy": (0, 51, 102),
+    "maroon": (128, 0, 0),
+    "gray": (45, 45, 45),
+}
+
+LAYOUTS = {
+    # classic: single column, no banner, no sidebar
+    "classic": {"banner": False, "sidebar": False, "margins": 0.75},
+    # banner: single column with header banner
+    "banner": {"banner": True, "sidebar": False, "margins": 0.75},
+    # sidebar: two-column layout
+    "sidebar": {"banner": True, "sidebar": True, "margins": 0.75},
+    # compact: tighter margins, single column
+    "compact": {"banner": False, "sidebar": False, "margins": 0.5},
+    # modern: single column with strong accent and section bars
+    "modern": {"banner": False, "sidebar": False, "margins": 0.6},
+}
+
+
+def _build_preset_from_state(state: ModelState) -> dict:
+    layout_key = (state.resume_layout or "classic").lower()
+    font_key = (state.resume_font or "calibri").lower()
+    color_key = (state.resume_color or "blue").lower()
+
+    font_name, font_size = FONTS.get(font_key, FONTS["calibri"])
+    accent_rgb = COLORS.get(color_key, COLORS["blue"])
+    layout = LAYOUTS.get(layout_key, LAYOUTS["classic"]).copy()
+    p = {
+        "font": font_name,
+        "size": font_size,
+        "margins": layout.get("margins", 0.75),
+        "header_caps": True,
+        "accent": accent_rgb,
+        "header_banner": layout.get("banner", False),
+        "sidebar": layout.get("sidebar", False),
+        "bullet": "• ",
+    }
+    return p
+
+
 def make_resume_docx_styled(state: ModelState) -> ModelState:
-    style = (state.resume_format or "fmt1").lower()
-    return _make_resume_with_style(state, style=style)
+    # Legacy support: if resume_format set to fmtXX, keep special cases (e.g., fmt28)
+    fmt = (state.resume_format or "").lower()
+    if fmt.startswith("fmt"):
+        # Map some special legacy codes to new presets
+        if fmt == "fmt28":
+            state.resume_layout = "sidebar"
+            state.resume_font = "arial"
+            state.resume_color = "red"
+    p = _build_preset_from_state(state)
+
+    # Now render with the generalized preset p
+    return _render_doc_with_preset(state, p)
+
+
+def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
+    # Similar to _make_resume_with_style but driven solely by p
+    from docx import Document
+
+    def fmt_date(d):
+        if not d:
+            return ""
+        try:
+            if isinstance(d, (date, datetime)):
+                return d.strftime("%b %Y")
+            for fmt in ("%Y-%m-%d", "%Y-%m", "%d-%m-%Y", "%m/%d/%Y", "%b %Y", "%B %Y", "%Y"):
+                try:
+                    return datetime.strptime(str(d), fmt).strftime("%b %Y")
+                except Exception:
+                    pass
+            return str(d)
+        except Exception:
+            return str(d)
+
+    def join_clean(items, sep=" • "):
+        return sep.join([str(s) for s in items if s])
+
+    doc = Document()
+    for section in doc.sections:
+        m = p.get("margins", 0.75)
+        section.top_margin = Inches(m)
+        section.bottom_margin = Inches(m)
+        section.left_margin = Inches(m)
+        section.right_margin = Inches(m)
+
+    normal = doc.styles["Normal"]
+    normal.font.name = p["font"]
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), p["font"])
+    normal.font.size = Pt(p.get("size", 10.5))
+
+    def ensure_style(name, base="Normal", size=None, bold=False, all_caps=False, color=RGBColor(0, 0, 0)):
+        try:
+            stl = doc.styles[name]
+        except KeyError:
+            stl = doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+            stl.base_style = doc.styles[base]
+        stl.font.name = p["font"]
+        stl._element.rPr.rFonts.set(qn("w:eastAsia"), p["font"])
+        stl.font.size = Pt(size if size else p.get("size", 10.5))
+        stl.font.bold = bold
+        stl.font.all_caps = all_caps
+        stl.font.color.rgb = color
+        stl.paragraph_format.space_before = Pt(0)
+        stl.paragraph_format.space_after = Pt(2)
+        stl.paragraph_format.line_spacing = 1.05
+        return stl
+
+    accent_rgb = p.get("accent", (45, 45, 45))
+    ensure_style("SectionHeader", size=max(p.get("size", 10.5) - 0.5, 9.5), bold=True, all_caps=True, color=RGBColor(*accent_rgb))
+    ensure_style("HeaderName", size=p.get("size", 10.5) + 9, bold=True, all_caps=True)
+    ensure_style("HeaderContact", size=p.get("size", 10.5))
+    ensure_style("Tight", size=p.get("size", 10.5))
+
+    def set_spacing(pgh, before=0, after=2, line=1.05):
+        pf = pgh.paragraph_format
+        pf.space_before = Pt(before)
+        pf.space_after = Pt(after)
+        pf.line_spacing = line
+
+    def add_hyperlink(paragraph, text, url):
+        part = paragraph.part
+        r_id = part.relate_to(
+            url,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            is_external=True,
+        )
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), r_id)
+        new_run = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), "1155CC")
+        u = OxmlElement("w:u")
+        u.set(qn("w:val"), "single")
+        rPr.append(color)
+        rPr.append(u)
+        new_run.append(rPr)
+        text_node = OxmlElement("w:t")
+        text_node.text = text
+        new_run.append(text_node)
+        hyperlink.append(new_run)
+        paragraph._p.append(hyperlink)
+        return paragraph
+
+    # Header + optional banner
+    def add_rule():
+        t = doc.add_table(rows=1, cols=1)
+        tbl = t._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), "6")
+        bottom.set(qn("w:color"), "{:02X}{:02X}{:02X}".format(*accent_rgb))
+        borders.append(bottom)
+        tblPr.append(borders)
+        t.rows[0].cells[0].paragraphs[0].add_run("")
+        set_spacing(t.rows[0].cells[0].paragraphs[0], after=6)
+
+    if getattr(state.candidate_details, "name", None):
+        name_text = state.candidate_details.name.upper()
+        if p.get("header_banner"):
+            t = doc.add_table(rows=1, cols=1)
+            cell = t.rows[0].cells[0]
+            tcPr = cell._tc.get_or_add_tcPr()
+            shd = OxmlElement("w:shd")
+            shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:color"), "auto")
+            shd.set(qn("w:fill"), "{:02X}{:02X}{:02X}".format(*accent_rgb))
+            tcPr.append(shd)
+            pgh = cell.paragraphs[0]
+            pgh.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+            run = pgh.add_run(name_text)
+            run.font.color.rgb = RGBColor(255, 255, 255)
+            run.font.bold = True
+            run.font.size = Pt(p.get("size", 10.5) + 10)
+            set_spacing(pgh, after=4)
+        else:
+            name_para = doc.add_paragraph(style="HeaderName")
+            name_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+            name_para.add_run(name_text)
+            set_spacing(name_para, after=2)
+
+    # Sidebar vs single column
+    if p.get("sidebar"):
+        table = doc.add_table(rows=1, cols=2)
+        tbl = table._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
+        tblPr.append(borders)
+        try:
+            table.columns[0].width = Inches(2.2)
+            table.columns[1].width = Inches(5.2)
+        except Exception:
+            pass
+        left_cell, right_cell = table.rows[0].cells
+
+        # Left: Contact + Skills + Links
+        lc = left_cell.add_paragraph("Contact", style="SectionHeader")
+        set_spacing(lc, after=2)
+        contact_bits = []
+        if getattr(state.candidate_details, "email", None):
+            contact_bits.append(("mailto:" + state.candidate_details.email, state.candidate_details.email))
+        if getattr(state.candidate_details, "phone", None):
+            contact_bits.append(("tel:" + state.candidate_details.phone, state.candidate_details.phone))
+        for url_item in (getattr(state.candidate_details, "profiles", []) or []):
+            url = getattr(url_item, "url", None) if hasattr(url_item, "url") else str(url_item)
+            if url:
+                contact_bits.append((url, url))
+        for (url, text) in contact_bits:
+            pgh = left_cell.add_paragraph(style="Tight")
+            add_hyperlink(pgh, text, url)
+
+        skills = getattr(state.candidate_details, "skills", None)
+        if skills:
+            p_sk = left_cell.add_paragraph("Skills", style="SectionHeader")
+            set_spacing(p_sk, after=2)
+            for s in skills:
+                left_cell.add_paragraph(p.get("bullet", "• ") + str(s), style="Tight")
+
+        # Right content
+        summary = getattr(state.candidate_details, "summary", None)
+        if summary:
+            p_rh = right_cell.add_paragraph("Summary", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            right_cell.add_paragraph(summary, style="Tight")
+
+        experience = getattr(state.candidate_details, "experience", None)
+        if experience:
+            p_rh = right_cell.add_paragraph("Professional Experience", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for exp in experience:
+                title = getattr(exp, "title", "") or ""
+                company = getattr(exp, "company", "") or ""
+                location = getattr(exp, "location", "") or ""
+                sd = fmt_date(getattr(exp, "start_date", ""))
+                ed_raw = getattr(exp, "end_date", None)
+                ed = fmt_date(ed_raw) if ed_raw else "Present"
+                header = ", ".join([s for s in [title, company] if s]) + f"    {sd} – {ed}"
+                rp = right_cell.add_paragraph(header, style="Tight")
+                rp.runs and setattr(rp.runs[0], 'bold', True)
+                if location:
+                    right_cell.add_paragraph(location, style="Tight")
+                for item in getattr(exp, "responsibilities", None) or []:
+                    right_cell.add_paragraph(p.get("bullet", "• ") + str(item), style="Tight")
+
+        projects = getattr(state.candidate_details, "projects", None)
+        if projects:
+            p_rh = right_cell.add_paragraph("Projects", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for proj in projects:
+                name = getattr(proj, "name", "") or ""
+                descr = getattr(proj, "description", "") or ""
+                date_txt = fmt_date(getattr(proj, "date", "")) if getattr(proj, "date", None) else ""
+                header_left = ' '.join([x for x in [name, f"({date_txt})" if date_txt else ""] if x])
+                rp = right_cell.add_paragraph(header_left, style="Tight")
+                rp.runs and setattr(rp.runs[0], 'bold', True)
+                if descr:
+                    right_cell.add_paragraph(descr, style="Tight")
+
+        education = getattr(state.candidate_details, "education", None)
+        if education:
+            p_rh = right_cell.add_paragraph("Education", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for edu in education:
+                degree = getattr(edu, "degree", "") or ""
+                institute = getattr(edu, "institute", "") or ""
+                sd = fmt_date(getattr(edu, "start_date", ""))
+                ed_raw = getattr(edu, "end_date", None)
+                ed = fmt_date(ed_raw) if ed_raw else "Present"
+                header = ", ".join([s for s in [degree, institute] if s]) + f"    {sd} – {ed}"
+                right_cell.add_paragraph(header, style="Tight")
+
+        certs = getattr(state.candidate_details, "certifications", None)
+        if certs:
+            p_rh = right_cell.add_paragraph("Certifications", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for cert in certs:
+                name = getattr(cert, "name", "") or ""
+                issuer = getattr(cert, "issuer", "") or ""
+                cdate = fmt_date(getattr(cert, "date", "")) if getattr(cert, "date", None) else ""
+                right_cell.add_paragraph((" – ".join([s for s in [name, issuer] if s])) + (f"  {cdate}" if cdate else ""), style="Tight")
+
+        base = getattr(state, "file_path", None) or "resume.docx"
+        root, _ = os.path.splitext(base)
+        output_path = f"{root}_{state.resume_layout or 'layout'}_{state.resume_font or 'font'}_{state.resume_color or 'color'}.docx"
+        doc.save(output_path)
+        return {"docx_file": output_path}
+
+    # Single column flow
+    contact_para = doc.add_paragraph(style="HeaderContact")
+    contact_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    contact_bits = []
+    if getattr(state.candidate_details, "email", None):
+        contact_bits.append(("mailto:" + state.candidate_details.email, state.candidate_details.email))
+    if getattr(state.candidate_details, "phone", None):
+        contact_bits.append(("tel:" + state.candidate_details.phone, state.candidate_details.phone))
+    for prof in getattr(state.candidate_details, "profiles", []) or []:
+        url = getattr(prof, "url", None) if hasattr(prof, "url") else str(prof)
+        if url:
+            contact_bits.append((url, url))
+    for i, (url, text) in enumerate(contact_bits):
+        add_hyperlink(contact_para, text, url)
+        if i < len(contact_bits) - 1:
+            contact_para.add_run("  •  ")
+    set_spacing(contact_para, after=6)
+    add_rule()
+
+    summary = getattr(state.candidate_details, "summary", None)
+    if summary:
+        pgh = doc.add_paragraph("Summary", style="SectionHeader")
+        pgh.paragraph_format.keep_with_next = True
+        doc.add_paragraph(summary, style="Tight")
+
+    skills = getattr(state.candidate_details, "skills", None)
+    if skills:
+        pgh = doc.add_paragraph("Skills", style="SectionHeader")
+        pgh.paragraph_format.keep_with_next = True
+        doc.add_paragraph(join_clean(list(map(str, skills))), style="Tight")
+
+    experience = getattr(state.candidate_details, "experience", None)
+    if experience:
+        pgh = doc.add_paragraph("Professional Experience", style="SectionHeader")
+        pgh.paragraph_format.keep_with_next = True
+        for exp in experience:
+            title = getattr(exp, "title", "") or ""
+            company = getattr(exp, "company", "") or ""
+            location = getattr(exp, "location", "") or ""
+            sd = fmt_date(getattr(exp, "start_date", ""))
+            ed_raw = getattr(exp, "end_date", None)
+            ed = fmt_date(ed_raw) if ed_raw else "Present"
+            left_line = ", ".join([s for s in [title, company] if s])
+            right_line = location or ""
+            tbl = doc.add_table(rows=1, cols=2)
+            left, right = tbl.rows[0].cells
+            p_left = left.paragraphs[0]
+            p_left.add_run(left_line).bold = True
+            p_right = right.paragraphs[0]
+            p_right.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+            p_right.add_run(f"{sd} – {ed}")
+            for item in getattr(exp, "responsibilities", None) or []:
+                doc.add_paragraph(p.get("bullet", "• ") + str(item), style="Tight")
+
+    projects = getattr(state.candidate_details, "projects", None)
+    if projects:
+        pgh = doc.add_paragraph("Projects", style="SectionHeader")
+        pgh.paragraph_format.keep_with_next = True
+        for proj in projects:
+            name = getattr(proj, "name", "") or ""
+            descr = getattr(proj, "description", "") or ""
+            date_txt = fmt_date(getattr(proj, "date", "")) if getattr(proj, "date", None) else ""
+            header_left = ' '.join([x for x in [name, f"({date_txt})" if date_txt else ""] if x])
+            rp = doc.add_paragraph(header_left, style="Tight")
+            rp.runs and setattr(rp.runs[0], 'bold', True)
+            if descr:
+                doc.add_paragraph(descr, style="Tight")
+
+    education = getattr(state.candidate_details, "education", None)
+    if education:
+        pgh = doc.add_paragraph("Education", style="SectionHeader")
+        pgh.paragraph_format.keep_with_next = True
+        for edu in education:
+            degree = getattr(edu, "degree", "") or ""
+            institute = getattr(edu, "institute", "") or ""
+            sd = fmt_date(getattr(edu, "start_date", ""))
+            ed_raw = getattr(edu, "end_date", None)
+            ed = fmt_date(ed_raw) if ed_raw else "Present"
+            rp = doc.add_paragraph(f"{degree}, {institute}    {sd} – {ed}", style="Tight")
+            set_spacing(rp, after=0)
+
+    certs = getattr(state.candidate_details, "certifications", None)
+    if certs:
+        pgh = doc.add_paragraph("Certifications", style="SectionHeader")
+        pgh.paragraph_format.keep_with_next = True
+        for cert in certs:
+            name = getattr(cert, "name", "") or ""
+            issuer = getattr(cert, "issuer", "") or ""
+            cdate = fmt_date(getattr(cert, "date", "")) if getattr(cert, "date", None) else ""
+            doc.add_paragraph((" – ".join([s for s in [name, issuer] if s])) + (f"  {cdate}" if cdate else ""), style="Tight")
+
+    base = getattr(state, "file_path", None) or "resume.docx"
+    root, _ = os.path.splitext(base)
+    output_path = f"{root}_{state.resume_layout or 'layout'}_{state.resume_font or 'font'}_{state.resume_color or 'color'}.docx"
+    doc.save(output_path)
+    return {"docx_file": output_path}

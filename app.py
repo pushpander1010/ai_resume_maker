@@ -79,12 +79,52 @@ def _format_preview_preset(fmt: str) -> dict:
     return presets.get(fmt, presets["fmt1"]) 
 
 
-def render_format_preview(fmt: str):
-    p = _format_preview_preset(fmt)
+def render_format_preview(fmt: str = None, *, layout_key: str = None, font_key: str = None, color_key: str = None):
+    # Back-compat: if fmt provided, use mapping; else use 3-axis selection
+    if fmt:
+        p = _format_preview_preset(fmt)
+    else:
+        # Map keys to CSS presets
+        font_map = {
+            "calibri": "Calibri, Arial, sans-serif",
+            "times": "'Times New Roman', Times, serif",
+            "arial": "Arial, Helvetica, sans-serif",
+            "verdana": "Verdana, Geneva, sans-serif",
+            "georgia": "Georgia, 'Times New Roman', serif",
+            "garamond": "Garamond, serif",
+            "cambria": "Cambria, Georgia, serif",
+            "tahoma": "Tahoma, Geneva, sans-serif",
+            "trebuchet": "'Trebuchet MS', Tahoma, sans-serif",
+            "centurygothic": "'Century Gothic', Arial, sans-serif",
+        }
+        color_map = {
+            "blue": "#2F54EB",
+            "teal": "#009688",
+            "green": "#2E7D32",
+            "red": "#F44336",
+            "purple": "#9C27B0",
+            "slate": "#607D8B",
+            "orange": "#FF5722",
+            "navy": "#003366",
+            "maroon": "#800000",
+            "gray": "#2D2D2D",
+        }
+        layout_map = {
+            "classic": {"banner": False, "sidebar": False},
+            "banner": {"banner": True, "sidebar": False},
+            "sidebar": {"banner": True, "sidebar": True},
+            "compact": {"banner": False, "sidebar": False},
+            "modern": {"banner": False, "sidebar": False},
+        }
+        p = {
+            "font": font_map.get(font_key or "calibri"),
+            "accent": color_map.get(color_key or "blue"),
+        }
+        p.update(layout_map.get(layout_key or "classic", {}))
     font = p["font"]
     accent = p["accent"]
-    banner = p["banner"]
-    sidebar = p["sidebar"]
+    banner = p.get("banner", False)
+    sidebar = p.get("sidebar", False)
 
     # Minimal HTML/CSS + tiny JS hover to illustrate style
     if sidebar:
@@ -217,29 +257,51 @@ if st.session_state.phase == "upload":
 # JD + Model Selection Phase
 if st.session_state.phase == "jd":
     model_choice = st.selectbox("Choose Model", MODEL_OPTIONS)
-    # Offer 30 styles; label first few with descriptions, rest generic
-    base_labels = {
-        "fmt1": "Format 1 – Modern (Calibri, gray)",
-        "fmt2": "Format 2 – Classic (Times)",
-        "fmt3": "Format 3 – Clean (Arial, blue)",
-        "fmt4": "Format 4 – Verdana (green, tight)",
-        "fmt5": "Format 5 – Georgia (maroon banner)",
-        "fmt6": "Format 6 – Garamond (blue)",
-        "fmt7": "Format 7 – Cambria (teal)",
-        "fmt8": "Format 8 – Tahoma (orange)",
-        "fmt9": "Format 9 – Trebuchet (purple)",
-        "fmt10": "Format 10 – Century Gothic (slate)",
-        "fmt11": "Format 11 – Palatino (navy)",
-        "fmt12": "Format 12 – Calibri (cyan banner)",
+    # New 3-axis preset selection (Layouts x Fonts x Colors)
+    layouts = {
+        "classic": "Classic (single column)",
+        "banner": "Banner (single column with header)",
+        "sidebar": "Sidebar (two columns)",
+        "compact": "Compact (tight margins)",
+        "modern": "Modern (accented sections)",
     }
-    options = [f"fmt{i}" for i in range(1, 31)]
-    def _fmt_label(k: str) -> str:
-        return base_labels.get(k, f"Format {k[3:]} – Variant")
-    fmt_key = st.selectbox("Choose Resume Format", options=options, format_func=_fmt_label, index=0)
+    fonts = {
+        "calibri": "Calibri",
+        "times": "Times New Roman",
+        "arial": "Arial",
+        "verdana": "Verdana",
+        "georgia": "Georgia",
+        "garamond": "Garamond",
+        "cambria": "Cambria",
+        "tahoma": "Tahoma",
+        "trebuchet": "Trebuchet MS",
+        "centurygothic": "Century Gothic",
+    }
+    colors = {
+        "blue": "Blue",
+        "teal": "Teal",
+        "green": "Green",
+        "red": "Red",
+        "purple": "Purple",
+        "slate": "Slate",
+        "orange": "Orange",
+        "navy": "Navy",
+        "maroon": "Maroon",
+        "gray": "Gray",
+    }
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        layout_key = st.selectbox("Layout", options=list(layouts.keys()), format_func=lambda k: layouts[k], index=0)
+    with c2:
+        font_key = st.selectbox("Font", options=list(fonts.keys()), format_func=lambda k: fonts[k], index=0)
+    with c3:
+        color_key = st.selectbox("Accent Color", options=list(colors.keys()), format_func=lambda k: colors[k], index=0)
     st.markdown("### Provide Job Description")
     # Preview the chosen format
     with st.expander("Preview Selected Format", expanded=True):
-        render_format_preview(fmt_key)
+        # Derived name for clarity
+        st.caption(f"Preview: {layouts[layout_key]} • {fonts[font_key]} • {colors[color_key]}")
+        render_format_preview(layout_key=layout_key, font_key=font_key, color_key=color_key)
 
     jd_text = st.text_area(
         "Paste the job description (include recruiter email if available)", height=300
@@ -247,7 +309,9 @@ if st.session_state.phase == "jd":
     if jd_text:
         st.session_state.jd_text = jd_text
         st.session_state.model_choice = model_choice
-        st.session_state.resume_format = fmt_key
+        st.session_state.resume_layout = layout_key
+        st.session_state.resume_font = font_key
+        st.session_state.resume_color = color_key
         st.session_state.phase = "ready"
         st.rerun()
 
@@ -271,7 +335,9 @@ if st.session_state.phase == "processing":
                 file_path=file_path,
                 jd={"raw_jd": st.session_state.jd_text},
                 model=model_key,
-                resume_format=st.session_state.get("resume_format", "fmt1"),
+                resume_layout=st.session_state.get("resume_layout", "classic"),
+                resume_font=st.session_state.get("resume_font", "calibri"),
+                resume_color=st.session_state.get("resume_color", "blue"),
                 gmail_auth_creds=creds,
             )
 
