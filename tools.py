@@ -320,16 +320,6 @@ def convert_docx_to_pdf(state: ModelState) -> ModelState:
     if not state.docx_file or not os.path.exists(state.docx_file):
         return {"pdf_file": None}
 
-    # Try local conversion first (no OAuth, faster)
-    try:
-        from docx2pdf import convert as _docx2pdf_convert
-        base, _ = os.path.splitext(state.docx_file)
-        output_path = f"{base}.pdf"
-        _docx2pdf_convert(state.docx_file, output_path)
-        return {"pdf_file": output_path, "gmail_auth_creds": state.gmail_auth_creds}
-    except Exception:
-        pass
-
     SCOPES = [
         "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/drive.metadata.readonly",
@@ -365,11 +355,7 @@ def convert_docx_to_pdf(state: ModelState) -> ModelState:
             "name": os.path.basename(input_path),
             "mimeType": "application/vnd.google-apps.document",
         }
-        media = MediaFileUpload(
-            input_path,
-            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            resumable=True,
-        )
+        media = MediaFileUpload(input_path, mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document", resumable=True)
         uploaded = drive.files().create(body=file_metadata, media_body=media, fields="id").execute()
         file_id = uploaded["id"]
 
@@ -402,7 +388,14 @@ def create_draft_with_gmail_auth(state: ModelState) -> ModelState:
     service = build("gmail", "v1", credentials=creds)
 
     msg = EmailMessage()
-    body = (state.gmail_message.body if state.gmail_message else None) or "Default message body"
+    # Prefer provided gmail_message; else referral_message; else fallback text
+    body = None
+    if state.gmail_message and getattr(state.gmail_message, "body", None):
+        body = state.gmail_message.body
+    elif getattr(state, "referral_message", None):
+        body = state.referral_message
+    else:
+        body = "Hello,\n\nPlease find my resume attached.\n\nThanks."
     msg.set_content(body)
 
     profile = service.users().getProfile(userId="me").execute()
@@ -413,8 +406,33 @@ def create_draft_with_gmail_auth(state: ModelState) -> ModelState:
         st.error("Authenticated Gmail account mismatch. Please sign in again.")
         sign_out()
 
-    to_addr = (state.gmail_message.to if state.gmail_message and state.gmail_message.to else "example@example.com")
-    subject = (state.gmail_message.subject if state.gmail_message and state.gmail_message.subject else "AI Test")
+    # Fallback 'To' from JD email if not provided
+    jd_email = None
+    if state.jd:
+        if isinstance(state.jd, dict):
+            jd_email = state.jd.get("email")
+        else:
+            jd_email = getattr(state.jd, "email", None)
+    to_addr = None
+    if state.gmail_message and getattr(state.gmail_message, "to", None):
+        to_addr = state.gmail_message.to
+    elif jd_email:
+        to_addr = jd_email
+    else:
+        to_addr = from_addr  # draft to self if no recipient yet
+
+    # Subject fallback
+    jd_title = None
+    if state.jd:
+        if isinstance(state.jd, dict):
+            jd_title = state.jd.get("title")
+        else:
+            jd_title = getattr(state.jd, "title", None)
+    subject = None
+    if state.gmail_message and getattr(state.gmail_message, "subject", None):
+        subject = state.gmail_message.subject
+    else:
+        subject = f"Application for {jd_title}" if jd_title else "Application"
 
     msg["To"] = to_addr
     msg["From"] = from_addr
