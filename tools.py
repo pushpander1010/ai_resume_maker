@@ -273,6 +273,16 @@ def convert_docx_to_pdf(state: ModelState) -> ModelState:
     if not state.docx_file or not os.path.exists(state.docx_file):
         return {"pdf_file": None}
 
+    # Try local conversion first (no OAuth, faster)
+    try:
+        from docx2pdf import convert as _docx2pdf_convert
+        base, _ = os.path.splitext(state.docx_file)
+        output_path = f"{base}.pdf"
+        _docx2pdf_convert(state.docx_file, output_path)
+        return {"pdf_file": output_path, "gmail_auth_creds": state.gmail_auth_creds}
+    except Exception:
+        pass
+
     SCOPES = [
         "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/drive.metadata.readonly",
@@ -814,6 +824,33 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
             "header_banner": True,
             "bullet": "• ",
         },
+        # Additional expanded styles
+        "fmt6": {"font": "Garamond", "size": 11, "margins": 0.8, "header_caps": True, "accent": (47, 84, 235), "header_banner": False, "bullet": "• "},
+        "fmt7": {"font": "Cambria", "size": 11, "margins": 0.7, "header_caps": True, "accent": (0, 128, 128), "header_banner": False, "bullet": "– "},
+        "fmt8": {"font": "Tahoma", "size": 10.5, "margins": 0.6, "header_caps": False, "accent": (224, 108, 0), "header_banner": False, "bullet": "• "},
+        "fmt9": {"font": "Trebuchet MS", "size": 10.5, "margins": 0.6, "header_caps": True, "accent": (102, 51, 153), "header_banner": False, "bullet": "▪ "},
+        "fmt10": {"font": "Century Gothic", "size": 10.5, "margins": 0.6, "header_caps": False, "accent": (96, 125, 139), "header_banner": False, "bullet": "• "},
+        "fmt11": {"font": "Palatino Linotype", "size": 11, "margins": 0.8, "header_caps": True, "accent": (0, 51, 102), "header_banner": False, "bullet": "– "},
+        "fmt12": {"font": "Calibri", "size": 11, "margins": 0.5, "header_caps": True, "accent": (0, 188, 212), "header_banner": True, "bullet": "• "},
+        "fmt13": {"font": "Arial", "size": 10, "margins": 0.5, "header_caps": False, "accent": (63, 81, 181), "header_banner": False, "bullet": "◦ "},
+        "fmt14": {"font": "Georgia", "size": 10.5, "margins": 0.6, "header_caps": False, "accent": (233, 30, 99), "header_banner": False, "bullet": "• "},
+        "fmt15": {"font": "Verdana", "size": 10, "margins": 0.5, "header_caps": True, "accent": (46, 125, 50), "header_banner": True, "bullet": "▪ "},
+        "fmt16": {"font": "Times New Roman", "size": 12, "margins": 1.0, "header_caps": False, "accent": (33, 150, 243), "header_banner": False, "bullet": "– "},
+        "fmt17": {"font": "Cambria", "size": 10, "margins": 0.5, "header_caps": True, "accent": (0, 105, 92), "header_banner": False, "bullet": "• "},
+        "fmt18": {"font": "Garamond", "size": 11, "margins": 0.7, "header_caps": False, "accent": (121, 85, 72), "header_banner": True, "bullet": "▪ "},
+        "fmt19": {"font": "Tahoma", "size": 10, "margins": 0.5, "header_caps": True, "accent": (0, 150, 136), "header_banner": False, "bullet": "• "},
+        "fmt20": {"font": "Trebuchet MS", "size": 10.5, "margins": 0.7, "header_caps": False, "accent": (255, 87, 34), "header_banner": False, "bullet": "– "},
+        "fmt21": {"font": "Century Gothic", "size": 11, "margins": 0.7, "header_caps": True, "accent": (156, 39, 176), "header_banner": True, "bullet": "• "},
+        "fmt22": {"font": "Palatino Linotype", "size": 10.5, "margins": 0.6, "header_caps": False, "accent": (205, 220, 57), "header_banner": False, "bullet": "◦ "},
+        "fmt23": {"font": "Arial", "size": 11, "margins": 0.75, "header_caps": True, "accent": (0, 0, 0), "header_banner": False, "bullet": "• "},
+        "fmt24": {"font": "Georgia", "size": 11, "margins": 0.9, "header_caps": True, "accent": (63, 81, 181), "header_banner": True, "bullet": "▪ "},
+        "fmt25": {"font": "Verdana", "size": 10.5, "margins": 0.5, "header_caps": False, "accent": (33, 33, 33), "header_banner": False, "bullet": "• "},
+        "fmt26": {"font": "Times New Roman", "size": 11, "margins": 0.5, "header_caps": True, "accent": (76, 175, 80), "header_banner": False, "bullet": "– "},
+        "fmt27": {"font": "Cambria", "size": 11, "margins": 0.9, "header_caps": False, "accent": (244, 67, 54), "header_banner": False, "bullet": "▪ "},
+        "fmt28": {"font": "Garamond", "size": 10.5, "margins": 0.6, "header_caps": True, "accent": (33, 150, 243), "header_banner": True, "bullet": "• "},
+        "fmt29": {"font": "Tahoma", "size": 11, "margins": 0.8, "header_caps": False, "accent": (158, 158, 158), "header_banner": False, "bullet": "◦ "},
+        "fmt30": {"font": "Trebuchet MS", "size": 10.5, "margins": 0.6, "header_caps": True, "accent": (121, 85, 72), "header_banner": True, "bullet": "• "},
+        
     }
     p = presets.get(style, presets["fmt1"])
 
@@ -1166,4 +1203,14 @@ Write in a polite, concise tone. Don't assume familiarity.
 
     chain = prompt | get_model_instance(model_key=state.model) | StrOutputParser()
     output = chain.invoke({"jd": state.jd, "resume": state.thought})
-    return {"referral_message": output}
+    gm = GmailMessage.model_construct(
+        to=(state.jd.email if state.jd and getattr(state.jd, "email", None) else None),
+        subject="Referral Request",
+        body=output,
+    )
+    return {"referral_message": output, "gmail_message": gm}
+
+
+def make_resume_docx_styled(state: ModelState) -> ModelState:
+    style = (state.resume_format or "fmt1").lower()
+    return _make_resume_with_style(state, style=style)

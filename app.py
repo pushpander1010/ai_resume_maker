@@ -91,19 +91,25 @@ if st.session_state.phase == "upload":
 # JD + Model Selection Phase
 if st.session_state.phase == "jd":
     model_choice = st.selectbox("Choose Model", MODEL_OPTIONS)
-    format_labels = {
-        "fmt1": "Format 1 – Modern (Calibri, gray accent)",
-        "fmt2": "Format 2 – Classic (Times New Roman, minimal)",
-        "fmt3": "Format 3 – Clean (Arial, blue accent)",
-        "fmt4": "Format 4 – Verdana (green accent, tight)",
+    # Offer 30 styles; label first few with descriptions, rest generic
+    base_labels = {
+        "fmt1": "Format 1 – Modern (Calibri, gray)",
+        "fmt2": "Format 2 – Classic (Times)",
+        "fmt3": "Format 3 – Clean (Arial, blue)",
+        "fmt4": "Format 4 – Verdana (green, tight)",
         "fmt5": "Format 5 – Georgia (maroon banner)",
+        "fmt6": "Format 6 – Garamond (blue)",
+        "fmt7": "Format 7 – Cambria (teal)",
+        "fmt8": "Format 8 – Tahoma (orange)",
+        "fmt9": "Format 9 – Trebuchet (purple)",
+        "fmt10": "Format 10 – Century Gothic (slate)",
+        "fmt11": "Format 11 – Palatino (navy)",
+        "fmt12": "Format 12 – Calibri (cyan banner)",
     }
-    fmt_key = st.selectbox(
-        "Choose Resume Format",
-        options=list(format_labels.keys()),
-        format_func=lambda k: format_labels.get(k, k),
-        index=0,
-    )
+    options = [f"fmt{i}" for i in range(1, 31)]
+    def _fmt_label(k: str) -> str:
+        return base_labels.get(k, f"Format {k[3:]} – Variant")
+    fmt_key = st.selectbox("Choose Resume Format", options=options, format_func=_fmt_label, index=0)
     st.markdown("### Provide Job Description")
     jd_text = st.text_area(
         "Paste the job description (include recruiter email if available)", height=300

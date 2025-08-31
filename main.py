@@ -14,6 +14,7 @@ from tools import (
     create_draft_with_gmail_auth,
     fill_details,
     make_resume_docx,
+    make_resume_docx_styled,
     make_resume_docx_1,
     make_resume_docx_2,
     make_resume_docx_3,
@@ -60,6 +61,7 @@ def build_process_request_graph():
     g.add_node("write_email", write_email)
     g.add_node("write_referral", write_referral)
     g.add_node("fill_details", fill_details)
+    g.add_node("make_resume_docx_styled", make_resume_docx_styled)
 
     g.add_conditional_edges(
         "convert_docx_to_pdf",
@@ -68,18 +70,8 @@ def build_process_request_graph():
     )
     g.add_edge(START, "resume_improvements")
     g.add_edge("resume_improvements", "fill_details")
-    # Route to selected resume formatter
-    g.add_conditional_edges(
-        "fill_details",
-        select_resume_format,
-        {
-            "fmt1": "make_resume_docx_1",
-            "fmt2": "make_resume_docx_2",
-            "fmt3": "make_resume_docx_3",
-            "fmt4": "make_resume_docx_4",
-            "fmt5": "make_resume_docx_5",
-        },
-    )
+    # Route to a single builder that respects state.resume_format
+    g.add_edge("fill_details", "make_resume_docx_styled")
     # After any resume formatter, convert to PDF
     g.add_edge([
         "make_resume_docx_1",
@@ -90,6 +82,7 @@ def build_process_request_graph():
     ], "convert_docx_to_pdf")
     g.add_edge("make_resume_docx", "convert_docx_to_pdf")
     g.add_edge("write_email", "create_draft_with_gmail_auth")
+    g.add_edge("write_referral", "create_draft_with_gmail_auth")
     g.add_edge("create_draft_with_gmail_auth", END)
     return g.compile()
 
@@ -130,17 +123,7 @@ def build_main_graph():
     )
     g.add_edge(["fill_jd", "get_answers"], "resume_improvements")
     g.add_edge("resume_improvements", "fill_details")
-    g.add_conditional_edges(
-        "fill_details",
-        select_resume_format,
-        {
-            "fmt1": "make_resume_docx_1",
-            "fmt2": "make_resume_docx_2",
-            "fmt3": "make_resume_docx_3",
-            "fmt4": "make_resume_docx_4",
-            "fmt5": "make_resume_docx_5",
-        },
-    )
+    g.add_edge("fill_details", "make_resume_docx_styled")
     g.add_edge([
         "make_resume_docx_1",
         "make_resume_docx_2",
@@ -150,6 +133,7 @@ def build_main_graph():
     ], "convert_docx_to_pdf")
     g.add_edge("make_resume_docx", "convert_docx_to_pdf")
     g.add_edge("write_email", "create_draft_with_gmail_auth")
+    g.add_edge("write_referral", "create_draft_with_gmail_auth")
     g.add_edge("create_draft_with_gmail_auth", END)
     return g.compile()
 
