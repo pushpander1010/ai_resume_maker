@@ -857,6 +857,17 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
         
     }
     p = presets.get(style, presets["fmt1"])
+    # Align fmt28 with Streamlit preview: red accent, Arial, banner + sidebar
+    if style == "fmt28":
+        try:
+            p.update({
+                "font": "Arial",
+                "accent": (244, 67, 54),
+                "header_banner": True,
+            })
+            p["sidebar"] = True
+        except Exception:
+            pass
 
     # Build a document similarly to make_resume_docx but with preset tweaks
     from docx import Document  # local import to avoid confusion
@@ -1039,6 +1050,120 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
             if style in ("fmt3", "fmt4", "fmt5"):
                 run.font.color.rgb = RGBColor(*accent_rgb)
             set_spacing(name_para, after=2)
+
+    # Sidebar layout for formats like fmt28
+    if p.get("sidebar"):
+        table = doc.add_table(rows=1, cols=2)
+        tbl = table._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            e = OxmlElement(f"w:{edge}")
+            e.set(qn("w:val"), "nil")
+            borders.append(e)
+        tblPr.append(borders)
+        try:
+            table.columns[0].width = Inches(2.2)
+            table.columns[1].width = Inches(5.2)
+        except Exception:
+            pass
+        left_cell, right_cell = table.rows[0].cells
+
+        # Left column: contacts and skills
+        lc = left_cell.paragraphs[0]
+        lc = left_cell.add_paragraph("Contact", style="SectionHeader")
+        set_spacing(lc, after=2)
+        contact_bits = []
+        if getattr(state.candidate_details, "email", None):
+            contact_bits.append(("mailto:" + state.candidate_details.email, state.candidate_details.email))
+        if getattr(state.candidate_details, "phone", None):
+            contact_bits.append(("tel:" + state.candidate_details.phone, state.candidate_details.phone))
+        for url_item in (getattr(state.candidate_details, "profiles", []) or []):
+            url = getattr(url_item, "url", None) if hasattr(url_item, "url") else str(url_item)
+            if url:
+                contact_bits.append((url, url))
+        for (url, text) in contact_bits:
+            pgh = left_cell.add_paragraph(style="Tight")
+            add_hyperlink(pgh, text, url)
+
+        skills = getattr(state.candidate_details, "skills", None)
+        if skills:
+            p_sk = left_cell.add_paragraph("Skills", style="SectionHeader")
+            set_spacing(p_sk, after=2)
+            for s in skills:
+                left_cell.add_paragraph((p.get("bullet") or "• ") + str(s), style="Tight")
+
+        # Right column: summary and main sections
+        summary = getattr(state.candidate_details, "summary", None)
+        if summary:
+            p_rh = right_cell.add_paragraph("Summary", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            right_cell.add_paragraph(summary, style="Tight")
+
+        experience = getattr(state.candidate_details, "experience", None)
+        if experience:
+            p_rh = right_cell.add_paragraph("Professional Experience", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for exp in experience:
+                title = getattr(exp, "title", "") or ""
+                company = getattr(exp, "company", "") or ""
+                location = getattr(exp, "location", "") or ""
+                sd = fmt_date(getattr(exp, "start_date", ""))
+                ed_raw = getattr(exp, "end_date", None)
+                ed = fmt_date(ed_raw) if ed_raw else "Present"
+                header = f"{', '.join([s for s in [title, company] if s])}    {sd} – {ed}"
+                rp = right_cell.add_paragraph(header, style="Tight")
+                rp.runs and setattr(rp.runs[0], 'bold', True)
+                if location:
+                    right_cell.add_paragraph(location, style="Tight")
+                for item in getattr(exp, "responsibilities", None) or []:
+                    right_cell.add_paragraph((p.get("bullet") or "• ") + str(item), style="Tight")
+
+        projects = getattr(state.candidate_details, "projects", None)
+        if projects:
+            p_rh = right_cell.add_paragraph("Projects", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for proj in projects:
+                name = getattr(proj, "name", "") or ""
+                descr = getattr(proj, "description", "") or ""
+                date_txt = fmt_date(getattr(proj, "date", "")) if getattr(proj, "date", None) else ""
+                header_left = ' '.join([x for x in [name, f"({date_txt})" if date_txt else ""] if x])
+                rp = right_cell.add_paragraph(header_left, style="Tight")
+                rp.runs and setattr(rp.runs[0], 'bold', True)
+                if descr:
+                    right_cell.add_paragraph(descr, style="Tight")
+
+        education = getattr(state.candidate_details, "education", None)
+        if education:
+            p_rh = right_cell.add_paragraph("Education", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for edu in education:
+                degree = getattr(edu, "degree", "") or ""
+                institute = getattr(edu, "institute", "") or ""
+                sd = fmt_date(getattr(edu, "start_date", ""))
+                ed_raw = getattr(edu, "end_date", None)
+                ed = fmt_date(ed_raw) if ed_raw else "Present"
+                header = f"{', '.join([s for s in [degree, institute] if s])}    {sd} – {ed}"
+                right_cell.add_paragraph(header, style="Tight")
+
+        certs = getattr(state.candidate_details, "certifications", None)
+        if certs:
+            p_rh = right_cell.add_paragraph("Certifications", style="SectionHeader")
+            p_rh.paragraph_format.keep_with_next = True
+            for cert in certs:
+                name = getattr(cert, "name", "") or ""
+                issuer = getattr(cert, "issuer", "") or ""
+                cdate = fmt_date(getattr(cert, "date", "")) if getattr(cert, "date", None) else ""
+                right_cell.add_paragraph(
+                    (" – ".join([s for s in [name, issuer] if s])) + (f"  {cdate}" if cdate else ""),
+                    style="Tight",
+                )
+
+        base = getattr(state, "file_path", None) or "resume.docx"
+        root, _ = os.path.splitext(base)
+        output_path = f"{root}_{style}.docx"
+        doc.save(output_path)
+        return {"docx_file": output_path}
 
     contact_para = doc.add_paragraph(style="HeaderContact")
     contact_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
