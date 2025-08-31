@@ -131,11 +131,12 @@ def render_format_preview(fmt: str = None, *, layout_key: str = None, font_key: 
 
     # Minimal HTML/CSS + tiny JS hover to illustrate style
     if sidebar:
+        col_css = "270px 1fr" if (layout_key == "sidebar-wide") else "220px 1fr"
         html = f"""
         <style>
           html, body {{ background:#fff; }}
           .cv {{ font-family:{font}; color:#222; background:#fff; }}
-          .cv .wrap {{ display:grid; grid-template-columns: 240px 1fr; gap:18px; }}
+          .cv .wrap {{ display:grid; grid-template-columns: {col_css}; gap:18px; }}
           .cv .sidebar {{ background:#f7f9fb; border-left:6px solid {accent}; padding:14px; border-radius:6px; }}
           .cv .name {{ font-weight:800; font-size:26px; margin:0 0 6px; }}
           .cv .banner {{ display:{'block' if banner else 'none'}; background:{accent}; color:#fff; padding:10px 14px; border-radius:6px; font-weight:800; margin-bottom:10px; }}
@@ -216,18 +217,29 @@ def _coerce_state(raw_state):
     """
     if isinstance(raw_state, ModelState):
         return raw_state
+    # Merge partial dicts onto the existing state to preserve user selections
     if isinstance(raw_state, dict):
+        base = None
+        if isinstance(st.session_state.get("state"), ModelState):
+            base = st.session_state.state.model_dump()
+        elif st.session_state.get("uploaded_file") is not None:
+            # Build a minimal base from what we put into init_state in this session
+            base = {}
+        else:
+            base = {}
+
+        # sanitize nested pydantic
         sanitized = {}
         for k, v in raw_state.items():
-            # If nested pydantic model, convert to dict
             if hasattr(v, "model_dump"):
                 try:
                     v = v.model_dump()
                 except Exception:
                     pass
             sanitized[k] = v
-        return ModelState.model_validate(sanitized)
-    # Fallback to pydantic validation for other mapping-like objects
+        merged = {**(base or {}), **sanitized}
+        return ModelState.model_validate(merged)
+    # Fallback
     return ModelState.model_validate(raw_state)
 
 # Auth first (blocks until authenticated)
