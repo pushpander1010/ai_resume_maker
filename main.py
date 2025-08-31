@@ -80,6 +80,14 @@ def build_process_request_graph():
             "fmt5": "make_resume_docx_5",
         },
     )
+    # After any resume formatter, convert to PDF
+    g.add_edge([
+        "make_resume_docx_1",
+        "make_resume_docx_2",
+        "make_resume_docx_3",
+        "make_resume_docx_4",
+        "make_resume_docx_5",
+    ], "convert_docx_to_pdf")
     g.add_edge("make_resume_docx", "convert_docx_to_pdf")
     g.add_edge("write_email", "create_draft_with_gmail_auth")
     g.add_edge("create_draft_with_gmail_auth", END)
@@ -133,6 +141,13 @@ def build_main_graph():
             "fmt5": "make_resume_docx_5",
         },
     )
+    g.add_edge([
+        "make_resume_docx_1",
+        "make_resume_docx_2",
+        "make_resume_docx_3",
+        "make_resume_docx_4",
+        "make_resume_docx_5",
+    ], "convert_docx_to_pdf")
     g.add_edge("make_resume_docx", "convert_docx_to_pdf")
     g.add_edge("write_email", "create_draft_with_gmail_auth")
     g.add_edge("create_draft_with_gmail_auth", END)

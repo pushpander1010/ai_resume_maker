@@ -71,11 +71,11 @@ if st.session_state.phase == "upload":
 if st.session_state.phase == "jd":
     model_choice = st.selectbox("Choose Model", MODEL_OPTIONS)
     format_labels = {
-        "fmt1": "Format 1 – Modern (Calibri, compact)",
-        "fmt2": "Format 2 – Classic (Times New Roman)",
-        "fmt3": "Format 3 – Clean (Arial)",
-        "fmt4": "Format 4 – Verdana Tight",
-        "fmt5": "Format 5 – Georgia Professional",
+        "fmt1": "Format 1 – Modern (Calibri, gray accent)",
+        "fmt2": "Format 2 – Classic (Times New Roman, minimal)",
+        "fmt3": "Format 3 – Clean (Arial, blue accent)",
+        "fmt4": "Format 4 – Verdana (green accent, tight)",
+        "fmt5": "Format 5 – Georgia (maroon banner)",
     }
     fmt_key = st.selectbox(
         "Choose Resume Format",

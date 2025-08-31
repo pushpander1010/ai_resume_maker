@@ -764,11 +764,56 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
 
     # Choose style presets
     presets = {
-        "fmt1": {"font": "Calibri", "size": 10.5, "margins": 0.5, "header_caps": True},
-        "fmt2": {"font": "Times New Roman", "size": 11, "margins": 1.0, "header_caps": False},
-        "fmt3": {"font": "Arial", "size": 10.5, "margins": 0.75, "header_caps": True},
-        "fmt4": {"font": "Verdana", "size": 10, "margins": 0.6, "header_caps": False},
-        "fmt5": {"font": "Georgia", "size": 11, "margins": 0.8, "header_caps": True},
+        # Modern: Calibri, neutral gray accent
+        "fmt1": {
+            "font": "Calibri",
+            "size": 10.5,
+            "margins": 0.5,
+            "header_caps": True,
+            "accent": (45, 45, 45),  # dark gray
+            "header_banner": False,
+            "bullet": "• ",
+        },
+        # Classic: Times New Roman, minimal accent, hyphen bullets
+        "fmt2": {
+            "font": "Times New Roman",
+            "size": 11,
+            "margins": 1.0,
+            "header_caps": False,
+            "accent": (0, 0, 0),  # black
+            "header_banner": False,
+            "bullet": "- ",
+        },
+        # Clean: Arial with blue accent
+        "fmt3": {
+            "font": "Arial",
+            "size": 10.5,
+            "margins": 0.75,
+            "header_caps": True,
+            "accent": (47, 84, 235),  # blue
+            "header_banner": False,
+            "bullet": "• ",
+        },
+        # Tight: Verdana with green accent and square bullets
+        "fmt4": {
+            "font": "Verdana",
+            "size": 10,
+            "margins": 0.6,
+            "header_caps": False,
+            "accent": (0, 135, 90),  # green
+            "header_banner": False,
+            "bullet": "▪ ",
+        },
+        # Professional: Georgia with maroon accent and header banner
+        "fmt5": {
+            "font": "Georgia",
+            "size": 11,
+            "margins": 0.8,
+            "header_caps": True,
+            "accent": (128, 0, 0),  # maroon
+            "header_banner": True,
+            "bullet": "• ",
+        },
     }
     p = presets.get(style, presets["fmt1"])
 
@@ -823,7 +868,14 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
         stl.paragraph_format.line_spacing = 1.05
         return stl
 
-    ensure_style("SectionHeader", size=max(p["size"] - 0.5, 9.5), bold=True, all_caps=p["header_caps"], color=RGBColor(45, 45, 45))
+    accent_rgb = p.get("accent", (45, 45, 45))
+    ensure_style(
+        "SectionHeader",
+        size=max(p["size"] - 0.5, 9.5),
+        bold=True,
+        all_caps=p["header_caps"],
+        color=RGBColor(*accent_rgb),
+    )
     ensure_style("HeaderName", size=p["size"] + 9, bold=True, all_caps=p["header_caps"])  # bigger name
     ensure_style("HeaderContact", size=p["size"])
     ensure_style("Tight", size=p["size"])
@@ -839,8 +891,7 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
             _ = doc.styles["List Bullet"]
             pgh = doc.add_paragraph(text, style="List Bullet")
         except KeyError:
-            sym = "• " if style != "fmt2" else "- "
-            pgh = doc.add_paragraph(sym + str(text), style="Tight")
+            pgh = doc.add_paragraph(p.get("bullet", "• ") + str(text), style="Tight")
         pf = pgh.paragraph_format
         pf.left_indent = Inches(0.2)
         pf.first_line_indent = Inches(0)
@@ -910,18 +961,43 @@ def _make_resume_with_style(state: ModelState, *, style: str) -> ModelState:
         bottom = OxmlElement("w:bottom")
         bottom.set(qn("w:val"), "single")
         bottom.set(qn("w:sz"), "6")
-        bottom.set(qn("w:color"), "999999")
+        bottom.set(qn("w:color"), "{:02X}{:02X}{:02X}".format(*accent_rgb))
         borders.append(bottom)
         tblPr.append(borders)
         t.rows[0].cells[0].paragraphs[0].add_run("")
         set_spacing(t.rows[0].cells[0].paragraphs[0], after=6)
 
     # Header
+    def add_header_banner(text: str):
+        # Create colored banner with white text
+        t = doc.add_table(rows=1, cols=1)
+        cell = t.rows[0].cells[0]
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), "{:02X}{:02X}{:02X}".format(*accent_rgb))
+        tcPr.append(shd)
+        pgh = cell.paragraphs[0]
+        pgh.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        run = pgh.add_run(text)
+        run.font.color.rgb = RGBColor(255, 255, 255)
+        run.font.bold = True
+        run.font.size = Pt(p["size"] + 10)
+        set_spacing(pgh, after=4)
+
     if getattr(state.candidate_details, "name", None):
-        name_para = doc.add_paragraph(style="HeaderName")
-        name_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        name_para.add_run(state.candidate_details.name.upper() if p["header_caps"] else state.candidate_details.name)
-        set_spacing(name_para, after=2)
+        header_text = state.candidate_details.name.upper() if p["header_caps"] else state.candidate_details.name
+        if p.get("header_banner"):
+            add_header_banner(header_text)
+        else:
+            name_para = doc.add_paragraph(style="HeaderName")
+            name_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+            run = name_para.add_run(header_text)
+            # Subtle color tint for some styles
+            if style in ("fmt3", "fmt4", "fmt5"):
+                run.font.color.rgb = RGBColor(*accent_rgb)
+            set_spacing(name_para, after=2)
 
     contact_para = doc.add_paragraph(style="HeaderContact")
     contact_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
