@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, BaseModel
 
 from models import ModelState
 from main import build_getting_input_graph, build_process_request_graph
@@ -39,6 +39,27 @@ MODEL_OPTIONS = [
 @st.cache_resource(show_spinner=False)
 def _graphs():
     return build_getting_input_graph(), build_process_request_graph()
+
+
+def _coerce_state(raw_state):
+    """Accept a dict or ModelState; sanitize nested Pydantic models to dicts before validation.
+    This avoids class-identity mismatches after hot-reload (common in Streamlit).
+    """
+    if isinstance(raw_state, ModelState):
+        return raw_state
+    if isinstance(raw_state, dict):
+        sanitized = {}
+        for k, v in raw_state.items():
+            # If nested pydantic model, convert to dict
+            if hasattr(v, "model_dump"):
+                try:
+                    v = v.model_dump()
+                except Exception:
+                    pass
+            sanitized[k] = v
+        return ModelState.model_validate(sanitized)
+    # Fallback to pydantic validation for other mapping-like objects
+    return ModelState.model_validate(raw_state)
 
 # Auth first (blocks until authenticated)
 os.makedirs("input", exist_ok=True)
@@ -119,11 +140,7 @@ if st.session_state.phase == "processing":
 
             getting_input_graph, _ = _graphs()
             raw_state = getting_input_graph.invoke(init_state)
-            st.session_state.state = (
-                raw_state
-                if isinstance(raw_state, ModelState)
-                else TypeAdapter(ModelState).validate_python(raw_state)
-            )
+            st.session_state.state = _coerce_state(raw_state)
             st.session_state.questions_answered = False
 
             if st.session_state.state.questions and st.session_state.state.questions.questions:
@@ -169,11 +186,7 @@ if st.session_state.phase == "processing_answers":
         try:
             _, process_request = _graphs()
             raw_state = process_request.invoke(st.session_state.state)
-            st.session_state.state = (
-                raw_state
-                if isinstance(raw_state, ModelState)
-                else TypeAdapter(ModelState).validate_python(raw_state)
-            )
+            st.session_state.state = _coerce_state(raw_state)
             st.session_state.phase = "final"
             st.rerun()
         except Exception as e:
