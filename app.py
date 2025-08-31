@@ -3,7 +3,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from pydantic import TypeAdapter, BaseModel
 
-from models import ModelState
+from models import ModelState, JD
 from main import build_getting_input_graph, build_process_request_graph
 from tools import ensure_google_creds, sign_out, get_model_instance
 
@@ -354,7 +354,7 @@ if st.session_state.phase == "processing":
             model_key = st.session_state.model_choice
             init_state = ModelState(
                 file_path=file_path,
-                jd={"raw_jd": st.session_state.jd_text},
+                jd=JD.model_construct(raw_jd=st.session_state.jd_text),
                 model=model_key,
                 resume_layout=st.session_state.get("resume_layout", "classic"),
                 resume_font=st.session_state.get("resume_font", "calibri"),
@@ -463,7 +463,7 @@ if st.session_state.phase == "final":
     jd_email = None
     try:
         if state.jd:
-            jd_email = state.jd.get("email") if isinstance(state.jd, dict) else getattr(state.jd, "email", None)
+            jd_email = getattr(state.jd, "email", None)
     except Exception:
         jd_email = None
 

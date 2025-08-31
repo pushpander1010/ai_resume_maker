@@ -74,6 +74,7 @@ class QuestionList(BaseModel):
     questions:Optional[list[Question]]=Field(default=None,description="list of questions to be asked regarding the missing data in resume.")
 
 class ModelState(BaseModel):
+    # Allow nested objects to survive Streamlit hot-reload, but keep strict field types
     model_config = ConfigDict(arbitrary_types_allowed=True)
     model:Optional[Any]=Field(default="google|gemini-2.5-flash", description="model to be used by the agents")
     thought: Annotated[Optional[str],lambda x,y:y] = Field(default=None,description="temp variable to store output of previous node")
@@ -83,11 +84,11 @@ class ModelState(BaseModel):
     resume_font: Optional[str] = Field(default="calibri", description="font key from preset list")
     resume_color: Optional[str] = Field(default="blue", description="color key from preset list")
     candidate_details:Optional[Details]=Field(default=None,description="Relevant Details of the candidate")
-    jd:Optional[Any]=Field(default=None,description="job description (JD model or dict)")
+    jd:Optional[JD]=Field(default=None,description="job description (JD model)")
     docx_file:Optional[str]=Field(default=None,description="path of the word document file")
     pdf_file:Optional[str]=Field(default=None,description="path of the pdf document file")
     gmail_auth_creds:Optional[Any]=Field(default=None,description="gmail service object")
     gmail_message:Optional[GmailMessage]=Field(default=None,description="email to be sent to hr")
     referral_message:Optional[str]=Field(default=None,description="referral message to be sent to hr")
     # Allow any QuestionList-like object to avoid hot-reload class identity issues
-    questions:Optional[Any]=Field(default=None,description="list of questions and answers to be asked regarding the missing data in resume.")
+    questions:Optional[QuestionList]=Field(default=None,description="list of questions and answers to be asked regarding the missing data in resume.")
