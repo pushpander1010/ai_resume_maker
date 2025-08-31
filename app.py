@@ -347,6 +347,12 @@ if st.session_state.phase == "final":
             st.text_area("Referral Text", state.referral_message, height=150)
 
     if st.button("Create Another"):
+        # Preserve auth/session identity keys; reset only flow-related state
+        preserve = {"user_sub", "user_email", "user_name", "oauth_code_exchanged"}
         for key in list(st.session_state.keys()):
+            if key in preserve:
+                continue
             del st.session_state[key]
+        # Reinitialize phase cleanly
+        st.session_state.phase = "upload"
         st.rerun()
