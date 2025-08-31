@@ -1434,16 +1434,22 @@ COLORS = {
 }
 
 LAYOUTS = {
-    # classic: single column, no banner, no sidebar
-    "classic": {"banner": False, "sidebar": False, "margins": 0.75},
+    # classic: single column, neutral caps, no banner/sidebar
+    "classic": {"banner": False, "sidebar": False, "margins": 0.75, "header_caps": True},
     # banner: single column with header banner
-    "banner": {"banner": True, "sidebar": False, "margins": 0.75},
+    "banner": {"banner": True, "sidebar": False, "margins": 0.75, "header_caps": True},
     # sidebar: two-column layout
-    "sidebar": {"banner": True, "sidebar": True, "margins": 0.75},
+    "sidebar": {"banner": True, "sidebar": True, "margins": 0.75, "header_caps": True},
     # compact: tighter margins, single column
-    "compact": {"banner": False, "sidebar": False, "margins": 0.5},
-    # modern: single column with strong accent and section bars
-    "modern": {"banner": False, "sidebar": False, "margins": 0.6},
+    "compact": {"banner": False, "sidebar": False, "margins": 0.5, "header_caps": True},
+    # modern: single column with tighter margins
+    "modern": {"banner": False, "sidebar": False, "margins": 0.6, "header_caps": True},
+    # minimal: single column, larger margins, no caps
+    "minimal": {"banner": False, "sidebar": False, "margins": 1.0, "header_caps": False},
+    # elegant: banner + larger margins
+    "elegant": {"banner": True, "sidebar": False, "margins": 1.0, "header_caps": True},
+    # sidebar-wide: wider left column for skills/contact
+    "sidebar-wide": {"banner": True, "sidebar": True, "margins": 0.75, "header_caps": True, "sidebar_widths": (2.7, 4.7)},
 }
 
 
@@ -1459,10 +1465,11 @@ def _build_preset_from_state(state: ModelState) -> dict:
         "font": font_name,
         "size": font_size,
         "margins": layout.get("margins", 0.75),
-        "header_caps": True,
+        "header_caps": layout.get("header_caps", True),
         "accent": accent_rgb,
         "header_banner": layout.get("banner", False),
         "sidebar": layout.get("sidebar", False),
+        "sidebar_widths": layout.get("sidebar_widths"),
         "bullet": "• ",
     }
     return p
@@ -1536,8 +1543,8 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
         return stl
 
     accent_rgb = p.get("accent", (45, 45, 45))
-    ensure_style("SectionHeader", size=max(p.get("size", 10.5) - 0.5, 9.5), bold=True, all_caps=True, color=RGBColor(*accent_rgb))
-    ensure_style("HeaderName", size=p.get("size", 10.5) + 9, bold=True, all_caps=True)
+    ensure_style("SectionHeader", size=max(p.get("size", 10.5) - 0.5, 9.5), bold=True, all_caps=p.get("header_caps", True), color=RGBColor(*accent_rgb))
+    ensure_style("HeaderName", size=p.get("size", 10.5) + 9, bold=True, all_caps=p.get("header_caps", True))
     ensure_style("HeaderContact", size=p.get("size", 10.5))
     ensure_style("Tight", size=p.get("size", 10.5))
 
@@ -1592,7 +1599,7 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
         set_spacing(t.rows[0].cells[0].paragraphs[0], after=6)
 
     if getattr(state.candidate_details, "name", None):
-        name_text = state.candidate_details.name.upper()
+        name_text = state.candidate_details.name.upper() if p.get("header_caps", True) else state.candidate_details.name
         if p.get("header_banner"):
             t = doc.add_table(rows=1, cols=1)
             cell = t.rows[0].cells[0]
@@ -1627,8 +1634,9 @@ def _render_doc_with_preset(state: ModelState, p: dict) -> ModelState:
             borders.append(e)
         tblPr.append(borders)
         try:
-            table.columns[0].width = Inches(2.2)
-            table.columns[1].width = Inches(5.2)
+            w = p.get("sidebar_widths", (2.2, 5.2))
+            table.columns[0].width = Inches(w[0])
+            table.columns[1].width = Inches(w[1])
         except Exception:
             pass
         left_cell, right_cell = table.rows[0].cells

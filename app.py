@@ -115,6 +115,9 @@ def render_format_preview(fmt: str = None, *, layout_key: str = None, font_key: 
             "sidebar": {"banner": True, "sidebar": True},
             "compact": {"banner": False, "sidebar": False},
             "modern": {"banner": False, "sidebar": False},
+            "minimal": {"banner": False, "sidebar": False},
+            "elegant": {"banner": True, "sidebar": False},
+            "sidebar-wide": {"banner": True, "sidebar": True},
         }
         p = {
             "font": font_map.get(font_key or "calibri"),
@@ -256,6 +259,9 @@ if st.session_state.phase == "upload":
 
 # JD + Model Selection Phase
 if st.session_state.phase == "jd":
+    if st.button("← Back"):
+        st.session_state.phase = "upload"
+        st.rerun()
     model_choice = st.selectbox("Choose Model", MODEL_OPTIONS)
     # New 3-axis preset selection (Layouts x Fonts x Colors)
     layouts = {
@@ -317,6 +323,9 @@ if st.session_state.phase == "jd":
 
 # Generate Button
 if st.session_state.phase == "ready":
+    if st.button("← Back"):
+        st.session_state.phase = "jd"
+        st.rerun()
     if st.button("Generate Updated Resume"):
         st.session_state.phase = "processing"
         st.rerun()
@@ -358,6 +367,9 @@ if st.session_state.phase == "processing":
 
 # Questions Phase
 if st.session_state.phase == "questions":
+    if st.button("← Back"):
+        st.session_state.phase = "jd"
+        st.rerun()
     with st.expander("Missing Resume Info (Click to Answer)", expanded=True):
         st.warning("Your resume is missing some important information. Please answer the following:")
 
@@ -385,6 +397,9 @@ if st.session_state.phase == "questions":
 
 # Processing Answers
 if st.session_state.phase == "processing_answers":
+    if st.button("← Back"):
+        st.session_state.phase = "questions"
+        st.rerun()
     with st.spinner("Processing your answers..."):
         try:
             _, process_request = _graphs()
@@ -398,6 +413,13 @@ if st.session_state.phase == "processing_answers":
 
 # Final Output Phase
 if st.session_state.phase == "final":
+    if st.button("← Back"):
+        # Return to questions if they existed, else JD
+        if getattr(st.session_state.state, "questions", None) and getattr(st.session_state.state.questions, "questions", None):
+            st.session_state.phase = "questions"
+        else:
+            st.session_state.phase = "jd"
+        st.rerun()
     state = st.session_state.state
     st.success("Resume & Email generated successfully!")
 
