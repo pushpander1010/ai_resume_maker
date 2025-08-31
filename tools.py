@@ -388,7 +388,11 @@ def jd_provided(state: ModelState) -> bool:
 
 
 def fill_jd(state: ModelState) -> ModelState:
-    content = state.jd.raw_jd
+    jd_obj = state.jd
+    try:
+        content = jd_obj.get("raw_jd") if isinstance(jd_obj, dict) else jd_obj.raw_jd
+    except Exception:
+        content = None
     parser = PydanticOutputParser(pydantic_object=JD)
     prompt = PromptTemplate(
         template=(
@@ -1179,10 +1183,15 @@ def select_resume_format(state: ModelState) -> str:
 
 
 def is_email_in_jd(state: ModelState):
-    if state.jd and state.jd.email and "@" in state.jd.email:
+    email = None
+    if state.jd:
+        if isinstance(state.jd, dict):
+            email = state.jd.get("email")
+        else:
+            email = getattr(state.jd, "email", None)
+    if email and "@" in str(email):
         return "email_present"
-    else:
-        return "email_absent"
+    return "email_absent"
 
 
 def write_referral(state: ModelState):

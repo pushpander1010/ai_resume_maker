@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List,Any,Annotated
+from typing import Optional, List,Any,Annotated, Union
 # --- Models ---
 class Experience(BaseModel):
     title: Optional[str] = Field(default=None,description="Job title or role")
@@ -78,7 +78,7 @@ class ModelState(BaseModel):
     file_path:Optional[str]=Field(default=None,description="path of the file")
     resume_format: Optional[str] = Field(default="fmt1", description="selected resume docx format id: fmt1..fmt5")
     candidate_details:Optional[Details]=Field(default=None,description="Relevant Details of the candidate")
-    jd:Optional[JD]=Field(default=None,description="job description of the job")
+    jd:Optional[Union[JD, dict]]=Field(default=None,description="job description (JD model or dict)")
     docx_file:Optional[str]=Field(default=None,description="path of the word document file")
     pdf_file:Optional[str]=Field(default=None,description="path of the pdf document file")
     gmail_auth_creds:Optional[Any]=Field(default=None,description="gmail service object")
