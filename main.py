@@ -72,6 +72,8 @@ def build_process_request_graph():
     g.add_edge("resume_improvements", "fill_details")
     # Route to a single builder that respects state.resume_format
     g.add_edge("fill_details", "make_resume_docx_styled")
+    # Ensure styled builder flows to PDF
+    g.add_edge("make_resume_docx_styled", "convert_docx_to_pdf")
     # After any resume formatter, convert to PDF
     g.add_edge([
         "make_resume_docx_1",
@@ -124,6 +126,7 @@ def build_main_graph():
     g.add_edge(["fill_jd", "get_answers"], "resume_improvements")
     g.add_edge("resume_improvements", "fill_details")
     g.add_edge("fill_details", "make_resume_docx_styled")
+    g.add_edge("make_resume_docx_styled", "convert_docx_to_pdf")
     g.add_edge([
         "make_resume_docx_1",
         "make_resume_docx_2",

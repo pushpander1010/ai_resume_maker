@@ -369,9 +369,17 @@ if st.session_state.phase == "processing":
 
             if st.session_state.state.questions and st.session_state.state.questions.questions:
                 st.session_state.phase = "questions"
+                st.rerun()
             else:
+                # No questions needed; run the process graph now to generate DOCX/PDF and drafts
+                try:
+                    _, process_request = _graphs()
+                    raw2 = process_request.invoke(st.session_state.state)
+                    st.session_state.state = _coerce_state(raw2)
+                except Exception as e:
+                    st.error(f"Error while generating outputs: {e}")
                 st.session_state.phase = "final"
-            st.rerun()
+                st.rerun()
 
         except Exception as e:
             st.error(f"Error: {e}")
