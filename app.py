@@ -129,11 +129,12 @@ if st.session_state.phase == "processing":
             with open(file_path, "wb") as f:
                 f.write(st.session_state.uploaded_file.getvalue())
 
-            model_instance = get_model_instance(st.session_state.model_choice)
+            # Keep only the model key on state; instantiate lazily in tools
+            model_key = st.session_state.model_choice
             init_state = ModelState(
                 file_path=file_path,
                 jd={"raw_jd": st.session_state.jd_text},
-                model=model_instance,
+                model=model_key,
                 resume_format=st.session_state.get("resume_format", "fmt1"),
                 gmail_auth_creds=creds,
             )
