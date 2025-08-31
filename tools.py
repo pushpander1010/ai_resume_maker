@@ -296,6 +296,7 @@ def passthrough(state: ModelState) -> ModelState:
 
 
 def write_email(state: ModelState) -> ModelState:
+    print("[route] writing email (JD had recipient email)")
     parser = PydanticOutputParser(pydantic_object=GmailMessage)
     prompt = PromptTemplate(
         template=(
@@ -313,6 +314,10 @@ def write_email(state: ModelState) -> ModelState:
     )
     chain = prompt | get_model_instance(model_key=state.model) | parser
     output = chain.invoke({"candidate_details": state.candidate_details, "jd": state.jd})
+    try:
+        print(f"[write_email] to={getattr(output, 'to', None)} subject={getattr(output, 'subject', None)}")
+    except Exception:
+        pass
     return {"gmail_message": output}
 
 
@@ -1394,9 +1399,9 @@ def is_email_in_jd(state: ModelState):
             email = state.jd.get("email")
         else:
             email = getattr(state.jd, "email", None)
-    if email and "@" in str(email):
-        return "email_present"
-    return "email_absent"
+    decision = "email_present" if (email and "@" in str(email)) else "email_absent"
+    print(f"[route] is_email_in_jd -> {decision} (email={email})")
+    return decision
 
 
 def write_referral(state: ModelState):
@@ -1422,6 +1427,7 @@ Write in a polite, concise tone. Don't assume familiarity.
         subject="Referral Request",
         body=output,
     )
+    print("[route] writing referral (JD had no recipient email)")
     return {"referral_message": output, "gmail_message": gm}
 
 
