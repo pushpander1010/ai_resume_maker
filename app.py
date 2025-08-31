@@ -76,7 +76,8 @@ def render_format_preview(fmt: str):
     if sidebar:
         html = f"""
         <style>
-          .cv {{ font-family:{font}; color:#222; }}
+          html, body {{ background:#fff; }}
+          .cv {{ font-family:{font}; color:#222; background:#fff; }}
           .cv .wrap {{ display:grid; grid-template-columns: 240px 1fr; gap:18px; }}
           .cv .sidebar {{ background:#f7f9fb; border-left:6px solid {accent}; padding:14px; border-radius:6px; }}
           .cv .name {{ font-weight:800; font-size:26px; margin:0 0 6px; }}
@@ -123,7 +124,8 @@ def render_format_preview(fmt: str):
     else:
         html = f"""
         <style>
-          .cv {{ font-family:{font}; color:#222; border:1px solid #e6e6e6; border-radius:8px; padding:14px; }}
+          html, body {{ background:#fff; }}
+          .cv {{ font-family:{font}; color:#222; background:#fff; border:1px solid #e6e6e6; border-radius:8px; padding:14px; }}
           .cv .name {{ text-align:center; font-weight:800; font-size:26px; margin:0; {('background:'+accent+';color:#fff;padding:10px;border-radius:6px;') if banner else ''} }}
           .cv .contact {{ text-align:center; margin:8px 0 12px; color:#444; }}
           .cv hr {{ border:none; border-top:2px solid {accent}; margin:8px 0 12px; }}
