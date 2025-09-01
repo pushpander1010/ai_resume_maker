@@ -330,7 +330,7 @@ if st.session_state.phase == "jd":
         height=120,
         help="Add any specific ask, tone, format, or constraints you want the agent to consider.",
     )
-    if jd_text:
+    if st.button("Continue") and (jd_text or "").strip():
         st.session_state.jd_text = jd_text
         st.session_state.model_choice = model_choice
         st.session_state.user_request = user_req
